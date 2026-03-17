@@ -150,13 +150,20 @@ struct AddReminderBarView: View {
                                 .frame(width: 14, height: 14)
                         } else {
                             Image(systemName: "wand.and.stars")
-                                .font(.system(size: 13, weight: .medium))
+                                .font(.system(size: 14, weight: .semibold))
                         }
                     }
-                    .foregroundStyle(RemindersPalette.accentBlue)
-                    .frame(width: 36, height: 40)
-                    .background(RemindersPalette.field, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .opacity(canSubmit && !isAIParsing ? 1 : 0.4)
+                    .foregroundStyle(.white)
+                    .frame(width: 40, height: 40)
+                    .background(
+                        LinearGradient(
+                            colors: [Color(hex: 0x7B5EF0), Color(hex: 0x5B8DEF)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    )
+                    .opacity(canSubmit && !isAIParsing ? 1 : 0.35)
                 }
                 .buttonStyle(.plain)
                 .disabled(!canSubmit || isAIParsing)

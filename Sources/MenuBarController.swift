@@ -14,9 +14,10 @@ final class MenuBarController: NSObject, ObservableObject {
 
     private let panelSize = CGSize(width: 320, height: 520)
     private let panelGap: CGFloat = 10
-    private let panelInitialScale: CGFloat = 0.97
-    private let panelShowDuration: TimeInterval = 0.18
-    private let panelHideDuration: TimeInterval = 0.14
+    private let panelInitialScale: CGFloat = 0.92
+    private let panelSlideOffset: CGFloat = 8
+    private let panelShowDuration: TimeInterval = 0.28
+    private let panelHideDuration: TimeInterval = 0.18
 
     init(store: ReminderStore) {
         self.store = store
@@ -83,7 +84,7 @@ final class MenuBarController: NSObject, ObservableObject {
         panel.contentViewController = controller
         panel.setContentSize(panelSize)
         syncHostingViewLayerGeometry()
-        setPanelContent(scale: 1, opacity: 1)
+        setPanelContent(scale: 1, opacity: 1, translateY: 0)
     }
 
     private func bindStore() {
@@ -152,17 +153,18 @@ final class MenuBarController: NSObject, ObservableObject {
         syncHostingViewLayerGeometry()
 
         if animated {
-            setPanelContent(scale: panelInitialScale, opacity: 0)
+            setPanelContent(scale: panelInitialScale, opacity: 0, translateY: panelSlideOffset)
             panel.makeKeyAndOrderFront(nil)
 
             animatePanelContent(
                 scale: 1,
                 opacity: 1,
+                translateY: 0,
                 duration: panelShowDuration,
-                timingFunction: CAMediaTimingFunction(name: .easeOut)
+                timingFunction: CAMediaTimingFunction(controlPoints: 0.2, 1.2, 0.4, 1)
             )
         } else {
-            setPanelContent(scale: 1, opacity: 1)
+            setPanelContent(scale: 1, opacity: 1, translateY: 0)
             panel.makeKeyAndOrderFront(nil)
         }
     }
@@ -181,6 +183,7 @@ final class MenuBarController: NSObject, ObservableObject {
             animatePanelContent(
                 scale: panelInitialScale,
                 opacity: 0,
+                translateY: panelSlideOffset,
                 duration: panelHideDuration,
                 timingFunction: CAMediaTimingFunction(name: .easeIn)
             ) { [weak self] in
@@ -189,11 +192,11 @@ final class MenuBarController: NSObject, ObservableObject {
                 }
 
                 self.panel.orderOut(nil)
-                self.setPanelContent(scale: 1, opacity: 1)
+                self.setPanelContent(scale: 1, opacity: 1, translateY: 0)
             }
         } else {
             panel.orderOut(nil)
-            setPanelContent(scale: 1, opacity: 1)
+            setPanelContent(scale: 1, opacity: 1, translateY: 0)
         }
     }
 
@@ -218,21 +221,27 @@ final class MenuBarController: NSObject, ObservableObject {
         CATransaction.commit()
     }
 
-    private func setPanelContent(scale: CGFloat, opacity: Float) {
+    private func setPanelContent(scale: CGFloat, opacity: Float, translateY: CGFloat) {
         guard let layer = hostingController?.view.layer else {
             return
         }
 
+        layer.removeAnimation(forKey: "panelTransform")
+        layer.removeAnimation(forKey: "panelOpacity")
+
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         layer.opacity = opacity
-        layer.setAffineTransform(CGAffineTransform(scaleX: scale, y: scale))
+        var transform = CGAffineTransform(scaleX: scale, y: scale)
+        transform = transform.translatedBy(x: 0, y: -translateY / scale)
+        layer.transform = CATransform3DMakeAffineTransform(transform)
         CATransaction.commit()
     }
 
     private func animatePanelContent(
         scale: CGFloat,
         opacity: Float,
+        translateY: CGFloat,
         duration: TimeInterval,
         timingFunction: CAMediaTimingFunction,
         completion: (() -> Void)? = nil
@@ -242,12 +251,35 @@ final class MenuBarController: NSObject, ObservableObject {
             return
         }
 
+        var targetTransform = CGAffineTransform(scaleX: scale, y: scale)
+        targetTransform = targetTransform.translatedBy(x: 0, y: -translateY / scale)
+        let target3D = CATransform3DMakeAffineTransform(targetTransform)
+
         CATransaction.begin()
-        CATransaction.setAnimationDuration(duration)
-        CATransaction.setAnimationTimingFunction(timingFunction)
         CATransaction.setCompletionBlock(completion)
+
+        let transformAnim = CABasicAnimation(keyPath: "transform")
+        transformAnim.fromValue = layer.presentation()?.transform ?? layer.transform
+        transformAnim.toValue = target3D
+        transformAnim.duration = duration
+        transformAnim.timingFunction = timingFunction
+        transformAnim.fillMode = .forwards
+        transformAnim.isRemovedOnCompletion = false
+
+        let opacityAnim = CABasicAnimation(keyPath: "opacity")
+        opacityAnim.fromValue = layer.presentation()?.opacity ?? layer.opacity
+        opacityAnim.toValue = opacity
+        opacityAnim.duration = duration
+        opacityAnim.timingFunction = timingFunction
+        opacityAnim.fillMode = .forwards
+        opacityAnim.isRemovedOnCompletion = false
+
+        layer.transform = target3D
         layer.opacity = opacity
-        layer.setAffineTransform(CGAffineTransform(scaleX: scale, y: scale))
+
+        layer.add(transformAnim, forKey: "panelTransform")
+        layer.add(opacityAnim, forKey: "panelOpacity")
+
         CATransaction.commit()
     }
 
