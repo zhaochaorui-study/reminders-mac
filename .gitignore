@@ -1,0 +1,8 @@
+.DS_Store
+.build/
+dist/
+.narrafork/
+.vscode/
+.env
+.env.local
+.env.*.local
