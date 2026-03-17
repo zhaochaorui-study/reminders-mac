@@ -14,6 +14,9 @@ final class DatabaseManager: @unchecked Sendable {
         return formatter
     }()
 
+    private let jsonEncoder = JSONEncoder()
+    private let jsonDecoder = JSONDecoder()
+
     private init() {
         openDatabase()
         createTableIfNeeded()
@@ -57,19 +60,21 @@ final class DatabaseManager: @unchecked Sendable {
 
     private func migrateTableIfNeeded() {
         queue.sync {
-            guard hasColumn(named: "created_at") == false else {
-                return
+            if hasColumn(named: "created_at") == false {
+                execute("ALTER TABLE reminders ADD COLUMN created_at TEXT")
+                execute("UPDATE reminders SET created_at = datetime('now','localtime') WHERE created_at IS NULL")
             }
 
-            execute("ALTER TABLE reminders ADD COLUMN created_at TEXT")
-            execute("UPDATE reminders SET created_at = datetime('now','localtime') WHERE created_at IS NULL")
+            if hasColumn(named: "recurrence_rule") == false {
+                execute("ALTER TABLE reminders ADD COLUMN recurrence_rule TEXT")
+            }
         }
     }
 
     func fetchAll() -> [ReminderItem] {
         var items: [ReminderItem] = []
         queue.sync {
-            let sql = "SELECT id, title, scheduled_at, is_completed, created_at FROM reminders ORDER BY scheduled_at ASC"
+            let sql = "SELECT id, title, scheduled_at, is_completed, created_at, recurrence_rule FROM reminders ORDER BY scheduled_at ASC"
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
                 return
@@ -90,6 +95,14 @@ final class DatabaseManager: @unchecked Sendable {
                 let isCompleted = sqlite3_column_int(stmt, 3) != 0
                 let createdString = sqlite3_column_text(stmt, 4).map { String(cString: $0) } ?? scheduledString
 
+                var recurrenceRule: RecurrenceRule?
+                if let ruleCStr = sqlite3_column_text(stmt, 5) {
+                    let ruleString = String(cString: ruleCStr)
+                    if let data = ruleString.data(using: .utf8) {
+                        recurrenceRule = try? jsonDecoder.decode(RecurrenceRule.self, from: data)
+                    }
+                }
+
                 guard let uuid = UUID(uuidString: idString),
                       let scheduledAt = dateFormatter.date(from: scheduledString),
                       let createdAt = dateFormatter.date(from: createdString)
@@ -105,7 +118,8 @@ final class DatabaseManager: @unchecked Sendable {
                         createdAt: createdAt,
                         tone: isCompleted ? .completed : Self.tone(for: scheduledAt),
                         isCompleted: isCompleted,
-                        showsMoreButton: !isCompleted
+                        showsMoreButton: !isCompleted,
+                        recurrenceRule: recurrenceRule
                     )
                 )
             }
@@ -115,7 +129,7 @@ final class DatabaseManager: @unchecked Sendable {
 
     func insert(_ item: ReminderItem) {
         queue.async { [self] in
-            let sql = "INSERT INTO reminders (id, title, scheduled_at, is_completed, created_at) VALUES (?, ?, ?, ?, ?)"
+            let sql = "INSERT INTO reminders (id, title, scheduled_at, is_completed, created_at, recurrence_rule) VALUES (?, ?, ?, ?, ?, ?)"
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
                 return
@@ -132,6 +146,14 @@ final class DatabaseManager: @unchecked Sendable {
             sqlite3_bind_int(stmt, 4, item.isCompleted ? 1 : 0)
             sqlite3_bind_text(stmt, 5, (createdString as NSString).utf8String, -1, nil)
 
+            if let rule = item.recurrenceRule,
+               let ruleData = try? jsonEncoder.encode(rule),
+               let ruleString = String(data: ruleData, encoding: .utf8) {
+                sqlite3_bind_text(stmt, 6, (ruleString as NSString).utf8String, -1, nil)
+            } else {
+                sqlite3_bind_null(stmt, 6)
+            }
+
             if sqlite3_step(stmt) != SQLITE_DONE {
                 NSLog("[DB] insert 失败: %@", String(cString: sqlite3_errmsg(db)))
             }
@@ -140,7 +162,7 @@ final class DatabaseManager: @unchecked Sendable {
 
     func update(_ item: ReminderItem) {
         queue.async { [self] in
-            let sql = "UPDATE reminders SET title = ?, scheduled_at = ?, is_completed = ?, updated_at = datetime('now','localtime') WHERE id = ?"
+            let sql = "UPDATE reminders SET title = ?, scheduled_at = ?, is_completed = ?, recurrence_rule = ?, updated_at = datetime('now','localtime') WHERE id = ?"
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
                 return
@@ -153,7 +175,16 @@ final class DatabaseManager: @unchecked Sendable {
             sqlite3_bind_text(stmt, 1, (item.title as NSString).utf8String, -1, nil)
             sqlite3_bind_text(stmt, 2, (scheduledString as NSString).utf8String, -1, nil)
             sqlite3_bind_int(stmt, 3, item.isCompleted ? 1 : 0)
-            sqlite3_bind_text(stmt, 4, (idString as NSString).utf8String, -1, nil)
+
+            if let rule = item.recurrenceRule,
+               let ruleData = try? jsonEncoder.encode(rule),
+               let ruleString = String(data: ruleData, encoding: .utf8) {
+                sqlite3_bind_text(stmt, 4, (ruleString as NSString).utf8String, -1, nil)
+            } else {
+                sqlite3_bind_null(stmt, 4)
+            }
+
+            sqlite3_bind_text(stmt, 5, (idString as NSString).utf8String, -1, nil)
 
             if sqlite3_step(stmt) != SQLITE_DONE {
                 NSLog("[DB] update 失败: %@", String(cString: sqlite3_errmsg(db)))

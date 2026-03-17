@@ -9,6 +9,7 @@ struct MenuBarRootView: View {
             theme: .dark,
             draftTitle: $store.draftTitle,
             draftScheduledAt: $store.draftScheduledAt,
+            draftRecurrenceRule: $store.draftRecurrenceRule,
             items: store.displayedItems,
             completedCount: store.completedCount,
             completedHistoryItems: store.completedHistoryItems,

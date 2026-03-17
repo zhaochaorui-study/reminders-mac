@@ -3,6 +3,7 @@ import Foundation
 struct AIParseResult: Sendable {
     let title: String
     let scheduledAt: Date
+    let recurrenceRule: RecurrenceRule?
 }
 
 private struct AIServiceConfiguration: Sendable {
@@ -165,7 +166,8 @@ final class AIService: @unchecked Sendable {
         let systemPrompt = """
         你是一个待办事项解析助手。用户会输入一段自然语言描述的待办事项，你需要从中提取：
         1. title: 待办事项的标题（简洁明了）
-        2. scheduled_at: 提醒时间，格式为 yyyy-MM-dd HH:mm
+        2. scheduled_at: 首次提醒时间，格式为 yyyy-MM-dd HH:mm
+        3. recurrence: 可选的重复规则
 
         当前时间是：\(now)
 
@@ -177,6 +179,9 @@ final class AIService: @unchecked Sendable {
         - 如果用户说"X小时后"，就是当前时间按分钟对齐到00秒后再加X小时
         - 如果用户没有指定具体时间，默认设为当天的09:00
         - 如果用户没有指定日期，默认为今天
+        - 如果用户说"每天"、"每日"，recurrence 为 {"type":"daily","hour":H,"minute":M}（从 scheduled_at 提取时分）
+        - 如果用户说"每周X"、"每个周X"，recurrence 为 {"type":"weekly","weekday":W,"hour":H,"minute":M}（weekday: 1=周日,2=周一...7=周六）
+        - 如果用户没有提到重复，不要返回 recurrence 字段
         - 如果无法从输入中识别出待办事项内容，返回 {"error": "no_title"}
         - 如果无法从输入中识别出时间信息，返回 {"error": "no_time"}
         - 如果输入完全无法理解，返回 {"error": "unknown"}
@@ -184,6 +189,8 @@ final class AIService: @unchecked Sendable {
 
         成功时返回格式（严格JSON）：
         {"title": "待办标题", "scheduled_at": "2026-03-17 15:00"}
+        或带重复：
+        {"title": "待办标题", "scheduled_at": "2026-03-17 15:00", "recurrence": {"type": "daily", "hour": 15, "minute": 0}}
         """
 
         let body: [String: Any] = [
@@ -221,7 +228,8 @@ final class AIService: @unchecked Sendable {
         let result = try parseJSON(content)
         return AIParseResult(
             title: result.title,
-            scheduledAt: resolvedScheduledAt(for: input, fallback: result.scheduledAt, referenceDate: referenceDate)
+            scheduledAt: resolvedScheduledAt(for: input, fallback: result.scheduledAt, referenceDate: referenceDate),
+            recurrenceRule: result.recurrenceRule
         )
     }
 
@@ -234,12 +242,12 @@ final class AIService: @unchecked Sendable {
         }
 
         guard let data = jsonStr.data(using: .utf8),
-              let parsed = try JSONSerialization.jsonObject(with: data) as? [String: String]
+              let parsed = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         else {
             throw AIServiceError.parseFailed
         }
 
-        if let error = parsed["error"] {
+        if let error = parsed["error"] as? String {
             switch error {
             case "no_title": throw AIServiceError.noTitle
             case "no_time": throw AIServiceError.noTime
@@ -247,14 +255,32 @@ final class AIService: @unchecked Sendable {
             }
         }
 
-        guard let title = parsed["title"],
-              let scheduledStr = parsed["scheduled_at"],
+        guard let title = parsed["title"] as? String,
+              let scheduledStr = parsed["scheduled_at"] as? String,
               let date = dateFormatter.date(from: scheduledStr)
         else {
             throw AIServiceError.parseFailed
         }
 
-        return AIParseResult(title: title, scheduledAt: date)
+        var recurrenceRule: RecurrenceRule?
+        if let recurrence = parsed["recurrence"] as? [String: Any],
+           let type = recurrence["type"] as? String {
+            switch type {
+            case "daily":
+                let hour = recurrence["hour"] as? Int ?? Calendar.autoupdatingCurrent.component(.hour, from: date)
+                let minute = recurrence["minute"] as? Int ?? Calendar.autoupdatingCurrent.component(.minute, from: date)
+                recurrenceRule = .daily(hour: hour, minute: minute)
+            case "weekly":
+                let weekday = recurrence["weekday"] as? Int ?? 2
+                let hour = recurrence["hour"] as? Int ?? Calendar.autoupdatingCurrent.component(.hour, from: date)
+                let minute = recurrence["minute"] as? Int ?? Calendar.autoupdatingCurrent.component(.minute, from: date)
+                recurrenceRule = .weekly(weekday: weekday, hour: hour, minute: minute)
+            default:
+                break
+            }
+        }
+
+        return AIParseResult(title: title, scheduledAt: date, recurrenceRule: recurrenceRule)
     }
 
     private func resolvedScheduledAt(for input: String, fallback: Date, referenceDate: Date) -> Date {

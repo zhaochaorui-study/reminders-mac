@@ -4,6 +4,7 @@ struct TodoPanelView: View {
     let theme: PanelTheme
     @Binding var draftTitle: String
     @Binding var draftScheduledAt: Date
+    @Binding var draftRecurrenceRule: RecurrenceRule?
     let items: [ReminderItem]
     let completedCount: Int
     let completedHistoryItems: [ReminderItem]
@@ -32,6 +33,7 @@ struct TodoPanelView: View {
                 theme: theme,
                 draftTitle: $draftTitle,
                 draftScheduledAt: $draftScheduledAt,
+                draftRecurrenceRule: $draftRecurrenceRule,
                 isAIParsing: isAIParsing,
                 validationMessage: draftValidationMessage,
                 onAdd: onAddReminder,

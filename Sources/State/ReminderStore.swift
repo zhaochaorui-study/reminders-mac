@@ -13,6 +13,7 @@ final class ReminderStore: ObservableObject {
 
     @Published var draftTitle: String = ""
     @Published var draftScheduledAt: Date
+    @Published var draftRecurrenceRule: RecurrenceRule?
     @Published var listScope: ReminderListScope = .dueToday
     @Published private(set) var pendingItems: [ReminderItem] = []
     @Published private(set) var highlightedReminderID: ReminderItem.ID?
@@ -130,6 +131,7 @@ final class ReminderStore: ObservableObject {
         if isCompleting {
             windowManager.dismissWindow(for: item.id)
             notificationManager.cancelNotification(for: item.id)
+            scheduleNextRecurrence(for: currentItem)
         }
 
         presentedReminderIDs.remove(item.id)
@@ -141,6 +143,7 @@ final class ReminderStore: ObservableObject {
         pendingItems = Self.sorted(items: pendingItems)
         syncPendingNotifications()
         dbUpdate(updated)
+        scheduleNextTick()
     }
 
     func markCompleted(_ item: ReminderItem) {
@@ -162,9 +165,11 @@ final class ReminderStore: ObservableObject {
         presentedReminderIDs.remove(item.id)
         presentedAdvanceReminderIDs.remove(item.id)
         highlightedReminderID = nil
+        scheduleNextRecurrence(for: currentItem)
         pendingItems = Self.sorted(items: pendingItems)
         syncPendingNotifications()
         dbUpdate(updated)
+        scheduleNextTick()
     }
 
     func focusReminder(_ item: ReminderItem) {
@@ -214,6 +219,7 @@ final class ReminderStore: ObservableObject {
         pendingItems = Self.sorted(items: pendingItems)
         syncPendingNotifications()
         dbUpdate(updated)
+        scheduleNextTick()
     }
 
     func deleteReminder(_ item: ReminderItem) {
@@ -229,6 +235,7 @@ final class ReminderStore: ObservableObject {
 
         syncPendingNotifications()
         dbDelete(item.id)
+        scheduleNextTick()
     }
 
     func clearCompleted() {
@@ -243,6 +250,7 @@ final class ReminderStore: ObservableObject {
         reconcileHighlightedReminder()
         syncPendingNotifications()
         dbDeleteCompleted()
+        scheduleNextTick()
     }
 
     func clearDraftValidationMessage() {
@@ -302,16 +310,63 @@ final class ReminderStore: ObservableObject {
     }
 
     private func startReminderTicker() {
+        scheduleNextTick()
+    }
+
+    private func scheduleNextTick() {
         reminderTimer?.cancel()
+
+        let now = Date()
+        let interval = nextTickInterval(from: now)
+
         let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now() + 1, repeating: 1)
+        timer.schedule(deadline: .now() + interval)
         timer.setEventHandler { [weak self] in
             Task { @MainActor in
-                self?.evaluateReminderPresentation()
+                guard let self else { return }
+                self.evaluateReminderPresentation()
+                self.scheduleNextTick()
             }
         }
         timer.resume()
         reminderTimer = timer
+    }
+
+    private func nextTickInterval(from now: Date) -> TimeInterval {
+        let activeItems = pendingItems.filter { !$0.isCompleted }
+        guard !activeItems.isEmpty else { return 60 }
+
+        var earliest: TimeInterval = 60
+
+        for item in activeItems {
+            let untilDue = item.scheduledAt.timeIntervalSince(now)
+
+            if untilDue <= 0 {
+                // 已到期但未弹窗，立即触发
+                if !presentedReminderIDs.contains(item.id) {
+                    return 0.5
+                }
+                continue
+            }
+
+            // 提前通知窗口
+            let untilAdvance = untilDue - Constants.advanceNoticeLeadTime
+            if untilAdvance > 0 && !presentedAdvanceReminderIDs.contains(item.id) {
+                earliest = min(earliest, untilAdvance)
+            }
+
+            // 到期时间
+            earliest = min(earliest, untilDue)
+
+            // tone 切换点（1 小时前 neutral → warning）
+            let untilToneChange = untilDue - 60 * 60
+            if untilToneChange > 0 && item.tone == .neutral {
+                earliest = min(earliest, untilToneChange)
+            }
+        }
+
+        // 至少 0.5s，最多 60s，加 0.1s 余量确保时间点已过
+        return max(0.5, min(earliest + 0.1, 60))
     }
 
     private func syncPendingNotifications() {
@@ -410,18 +465,33 @@ final class ReminderStore: ObservableObject {
         let trimmedTitle = draftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTitle.isEmpty else { return nil }
 
-        guard validateScheduledAt(
-            draftScheduledAt,
-            referenceDate: referenceDate,
-            failureMessage: "提醒时间必须晚于当前时间"
-        ) else { return nil }
+        let resolvedScheduledAt: Date
+        if let rule = draftRecurrenceRule {
+            // 周期性提醒：如果手选时间已过，自动算下一次
+            if draftScheduledAt > referenceDate {
+                resolvedScheduledAt = draftScheduledAt
+            } else if let next = rule.nextOccurrence(after: referenceDate) {
+                resolvedScheduledAt = next
+            } else {
+                presentDraftValidation("无法计算下一次重复时间，请检查规则")
+                return nil
+            }
+        } else {
+            guard validateScheduledAt(
+                draftScheduledAt,
+                referenceDate: referenceDate,
+                failureMessage: "提醒时间必须晚于当前时间"
+            ) else { return nil }
+            resolvedScheduledAt = draftScheduledAt
+        }
 
         return ReminderItem(
             title: trimmedTitle,
-            scheduledAt: draftScheduledAt,
+            scheduledAt: resolvedScheduledAt,
             createdAt: referenceDate,
-            tone: Self.tone(for: draftScheduledAt, referenceDate: referenceDate),
-            showsMoreButton: true
+            tone: Self.tone(for: resolvedScheduledAt, referenceDate: referenceDate),
+            showsMoreButton: true,
+            recurrenceRule: draftRecurrenceRule
         )
     }
 
@@ -431,22 +501,27 @@ final class ReminderStore: ObservableObject {
         syncPendingNotifications()
         dbInsert(reminder)
         evaluateReminderPresentation()
+        scheduleNextTick()
     }
 
     private func resetDraft() {
         draftTitle = ""
         draftScheduledAt = Self.defaultDraftDate()
+        draftRecurrenceRule = nil
         clearDraftValidationMessage()
     }
 
     private func applyAIParseResult(_ result: AIParseResult) {
         draftTitle = result.title.trimmingCharacters(in: .whitespacesAndNewlines)
         draftScheduledAt = result.scheduledAt
+        draftRecurrenceRule = result.recurrenceRule
 
-        guard validateScheduledAt(
-            result.scheduledAt,
-            failureMessage: "AI 解析出的提醒时间必须晚于当前时间，请修改描述后重试"
-        ) else { return }
+        if result.recurrenceRule == nil {
+            guard validateScheduledAt(
+                result.scheduledAt,
+                failureMessage: "AI 解析出的提醒时间必须晚于当前时间，请修改描述后重试"
+            ) else { return }
+        }
 
         addReminder()
     }
@@ -488,7 +563,8 @@ private extension ReminderStore {
         tone: ReminderItem.ScheduleTone? = nil,
         isCompleted: Bool? = nil,
         isHighlighted: Bool? = nil,
-        showsMoreButton: Bool? = nil
+        showsMoreButton: Bool? = nil,
+        recurrenceRule: RecurrenceRule?? = nil
     ) -> ReminderItem {
         ReminderItem(
             id: item.id,
@@ -498,7 +574,25 @@ private extension ReminderStore {
             tone: tone ?? item.tone,
             isCompleted: isCompleted ?? item.isCompleted,
             isHighlighted: isHighlighted ?? item.isHighlighted,
-            showsMoreButton: showsMoreButton ?? item.showsMoreButton
+            showsMoreButton: showsMoreButton ?? item.showsMoreButton,
+            recurrenceRule: recurrenceRule ?? item.recurrenceRule
         )
+    }
+
+    func scheduleNextRecurrence(for item: ReminderItem) {
+        guard let rule = item.recurrenceRule else { return }
+        let baseDate = max(item.scheduledAt, Date())
+        guard let nextDate = rule.nextOccurrence(after: baseDate) else { return }
+
+        let nextItem = ReminderItem(
+            title: item.title,
+            scheduledAt: nextDate,
+            createdAt: Date(),
+            tone: Self.tone(for: nextDate),
+            showsMoreButton: true,
+            recurrenceRule: rule
+        )
+        pendingItems.append(nextItem)
+        dbInsert(nextItem)
     }
 }

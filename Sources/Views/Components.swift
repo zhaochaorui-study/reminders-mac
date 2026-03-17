@@ -99,6 +99,7 @@ struct AddReminderBarView: View {
     let theme: PanelTheme
     @Binding var draftTitle: String
     @Binding var draftScheduledAt: Date
+    @Binding var draftRecurrenceRule: RecurrenceRule?
     let isAIParsing: Bool
     let validationMessage: String?
     let onAdd: () -> Void
@@ -106,9 +107,19 @@ struct AddReminderBarView: View {
     let onDismissValidationMessage: () -> Void
 
     @State private var isCalendarExpanded = false
+    @State private var cronInput: String = ""
 
     private var canSubmit: Bool {
         !draftTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var isCronMode: Bool {
+        if case .cron = draftRecurrenceRule { return true }
+        return false
+    }
+
+    private var isRecurringMode: Bool {
+        draftRecurrenceRule != nil
     }
 
     private var minimumSelectableDate: Date {
@@ -116,6 +127,18 @@ struct AddReminderBarView: View {
     }
 
     private var scheduleLabel: String {
+        if let rule = draftRecurrenceRule {
+            switch rule {
+            case .daily(let hour, let minute):
+                return "每天 \(String(format: "%02d:%02d", hour, minute))"
+            case .weekly(let weekday, let hour, let minute):
+                let name = weekdayShortName(weekday)
+                return "每\(name) \(String(format: "%02d:%02d", hour, minute))"
+            case .cron:
+                return ""
+            }
+        }
+
         let calendar = Calendar.current
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
@@ -128,6 +151,19 @@ struct AddReminderBarView: View {
             formatter.dateFormat = "M月d日 HH:mm"
         }
         return formatter.string(from: draftScheduledAt)
+    }
+
+    private func weekdayShortName(_ weekday: Int) -> String {
+        switch weekday {
+        case 1: return "周日"
+        case 2: return "周一"
+        case 3: return "周二"
+        case 4: return "周三"
+        case 5: return "周四"
+        case 6: return "周五"
+        case 7: return "周六"
+        default: return "周?"
+        }
     }
 
     var body: some View {
@@ -181,76 +217,86 @@ struct AddReminderBarView: View {
                 .disabled(!canSubmit)
             }
 
-            Button(action: {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    isCalendarExpanded.toggle()
-                }
-            }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "calendar")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(RemindersPalette.accentBlue)
-                    Text(scheduleLabel)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(RemindersPalette.primaryText)
-                    Spacer()
-                    Image(systemName: isCalendarExpanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(RemindersPalette.tertiaryText)
-                }
-                .padding(.horizontal, 12)
-                .frame(height: 34)
-                .background(RemindersPalette.field, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            if isCalendarExpanded {
-                VStack(spacing: 6) {
-                    DatePicker(
-                        "",
-                        selection: $draftScheduledAt,
-                        in: minimumSelectableDate...,
-                        displayedComponents: [.date]
-                    )
-                    .datePickerStyle(.graphical)
-                    .labelsHidden()
-                    .tint(RemindersPalette.accentBlue)
-                    .frame(maxHeight: 220)
-
-                    HStack(spacing: 8) {
-                        Image(systemName: "clock")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(RemindersPalette.secondaryText)
-
-                        DatePicker(
-                            "",
-                            selection: $draftScheduledAt,
-                            in: minimumSelectableDate...,
-                            displayedComponents: [.hourAndMinute]
-                        )
-                        .datePickerStyle(.stepperField)
-                        .labelsHidden()
-                        .tint(RemindersPalette.accentBlue)
-
-                        Spacer()
-
-                        Button("确定") {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                isCalendarExpanded = false
-                            }
-                        }
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(RemindersPalette.accentBlue)
-                        .buttonStyle(.plain)
+            if !isCronMode {
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isCalendarExpanded.toggle()
                     }
-                    .padding(.horizontal, 8)
-                    .frame(height: 28)
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "calendar")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(RemindersPalette.accentBlue)
+                        Text(scheduleLabel)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(RemindersPalette.primaryText)
+                        Spacer()
+                        Image(systemName: isCalendarExpanded ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(RemindersPalette.tertiaryText)
+                    }
+                    .padding(.horizontal, 12)
+                    .frame(height: 34)
+                    .background(RemindersPalette.field, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .contentShape(Rectangle())
                 }
-                .padding(8)
-                .background(RemindersPalette.field, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                .buttonStyle(.plain)
+
+                if isCalendarExpanded {
+                    VStack(spacing: 6) {
+                        if !isRecurringMode {
+                            DatePicker(
+                                "",
+                                selection: $draftScheduledAt,
+                                in: minimumSelectableDate...,
+                                displayedComponents: [.date]
+                            )
+                            .datePickerStyle(.graphical)
+                            .labelsHidden()
+                            .tint(RemindersPalette.accentBlue)
+                            .frame(maxHeight: 220)
+                        }
+
+                        HStack(spacing: 8) {
+                            Image(systemName: "clock")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(RemindersPalette.secondaryText)
+
+                            DatePicker(
+                                "",
+                                selection: $draftScheduledAt,
+                                in: minimumSelectableDate...,
+                                displayedComponents: [.hourAndMinute]
+                            )
+                            .datePickerStyle(.stepperField)
+                            .labelsHidden()
+                            .tint(RemindersPalette.accentBlue)
+
+                            Spacer()
+
+                            Button("确定") {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    isCalendarExpanded = false
+                                }
+                            }
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(RemindersPalette.accentBlue)
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.horizontal, 8)
+                        .frame(height: 28)
+                    }
+                    .padding(8)
+                    .background(RemindersPalette.field, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
             }
+
+            RecurrenceRulePicker(
+                rule: $draftRecurrenceRule,
+                scheduledAt: draftScheduledAt,
+                cronInput: $cronInput
+            )
 
             if let validationMessage {
                 HStack(spacing: 6) {
@@ -279,9 +325,28 @@ struct AddReminderBarView: View {
             guard validationMessage != nil else { return }
             onDismissValidationMessage()
         }
-        .onChange(of: draftScheduledAt) { _, _ in
-            guard validationMessage != nil else { return }
-            onDismissValidationMessage()
+        .onChange(of: draftScheduledAt) { _, newValue in
+            if validationMessage != nil {
+                onDismissValidationMessage()
+            }
+            syncRecurrenceTime(from: newValue)
+        }
+    }
+
+    private func syncRecurrenceTime(from date: Date) {
+        guard let rule = draftRecurrenceRule else { return }
+        let calendar = Calendar.autoupdatingCurrent
+        let comps = calendar.dateComponents([.hour, .minute], from: date)
+        let hour = comps.hour ?? 9
+        let minute = comps.minute ?? 0
+
+        switch rule {
+        case .daily:
+            draftRecurrenceRule = .daily(hour: hour, minute: minute)
+        case .weekly(let weekday, _, _):
+            draftRecurrenceRule = .weekly(weekday: weekday, hour: hour, minute: minute)
+        case .cron:
+            break
         }
     }
 
@@ -289,6 +354,127 @@ struct AddReminderBarView: View {
         let calendar = Calendar.autoupdatingCurrent
         let currentMinuteStart = calendar.dateInterval(of: .minute, for: date)?.start ?? date
         return calendar.date(byAdding: .minute, value: 1, to: currentMinuteStart) ?? date.addingTimeInterval(60)
+    }
+}
+
+// MARK: - Recurrence Rule Picker
+
+private enum RecurrencePickerMode: String, CaseIterable {
+    case none
+    case daily
+    case weekly
+    case cron
+
+    var label: String {
+        switch self {
+        case .none: return "不重复"
+        case .daily: return "每天"
+        case .weekly: return "每周"
+        case .cron: return "Cron"
+        }
+    }
+}
+
+struct RecurrenceRulePicker: View {
+    @Binding var rule: RecurrenceRule?
+    let scheduledAt: Date
+    @Binding var cronInput: String
+
+    private var pickerMode: RecurrencePickerMode {
+        guard let rule else { return .none }
+        switch rule {
+        case .daily: return .daily
+        case .weekly: return .weekly
+        case .cron: return .cron
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 4) {
+                ForEach(RecurrencePickerMode.allCases, id: \.rawValue) { mode in
+                    Button(action: { selectMode(mode) }) {
+                        Text(mode.label)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(pickerMode == mode ? RemindersPalette.primaryText : RemindersPalette.tertiaryText)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 28)
+                            .background(
+                                pickerMode == mode
+                                    ? RemindersPalette.elevated
+                                    : Color.clear,
+                                in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            )
+                    }
+                    .buttonStyle(.borderless)
+                    .contentShape(Rectangle())
+                }
+            }
+            .padding(3)
+            .background(RemindersPalette.card, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+            if pickerMode == .cron {
+                HStack(spacing: 6) {
+                    Image(systemName: "terminal")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(RemindersPalette.secondaryText)
+
+                    TextField("", text: $cronInput, prompt: Text("分 时 日 月 周").foregroundStyle(RemindersPalette.tertiaryText))
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(RemindersPalette.primaryText)
+                        .onSubmit { applyCron() }
+                        .onChange(of: cronInput) { _, _ in applyCron() }
+
+                    if case .cron = rule {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 12))
+                            .foregroundStyle(RemindersPalette.accentGreen)
+                    } else if !cronInput.trimmingCharacters(in: .whitespaces).isEmpty {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 12))
+                            .foregroundStyle(RemindersPalette.accentRed)
+                    }
+                }
+                .padding(.horizontal, 10)
+                .frame(height: 32)
+                .background(RemindersPalette.field, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+        }
+    }
+
+    private func selectMode(_ mode: RecurrencePickerMode) {
+        let calendar = Calendar.autoupdatingCurrent
+        let comps = calendar.dateComponents([.hour, .minute, .weekday], from: scheduledAt)
+        let hour = comps.hour ?? 9
+        let minute = comps.minute ?? 0
+        let weekday = comps.weekday ?? 2
+
+        switch mode {
+        case .none:
+            rule = nil
+            cronInput = ""
+        case .daily:
+            rule = .daily(hour: hour, minute: minute)
+        case .weekly:
+            rule = .weekly(weekday: weekday, hour: hour, minute: minute)
+        case .cron:
+            if cronInput.isEmpty {
+                cronInput = "\(minute) \(hour) * * *"
+            }
+            applyCron()
+        }
+    }
+
+    private func applyCron() {
+        let trimmed = cronInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            rule = nil
+            return
+        }
+        if CronExpression.parse(trimmed) != nil {
+            rule = .cron(trimmed)
+        }
     }
 }
 
