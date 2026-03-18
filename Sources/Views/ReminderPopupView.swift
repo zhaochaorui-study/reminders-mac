@@ -3,7 +3,7 @@ import SwiftUI
 struct ReminderPopupView: View {
     let reminder: ReminderItem
     let onDismiss: () -> Void
-    let onSnooze: () -> Void
+    let onSnooze: (SnoozeOption) -> Void
     let onComplete: () -> Void
 
     var body: some View {
@@ -43,11 +43,11 @@ struct ReminderPopupView: View {
                     .foregroundStyle(RemindersPalette.accentRed)
 
                 HStack(spacing: 8) {
-                    PopupActionButtonView(
+                    SnoozeOptionMenuButtonView(
                         title: "稍后提醒",
                         background: RemindersPalette.elevated,
                         foreground: RemindersPalette.primaryText,
-                        action: onSnooze
+                        onSelect: onSnooze
                     )
 
                     PopupActionButtonView(

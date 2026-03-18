@@ -2,12 +2,17 @@ import SwiftUI
 
 struct ContentView: View {
     @ObservedObject var store: ReminderStore
+    @ObservedObject private var themeManager = ThemeManager.shared
+
+    private var activeTheme: PanelTheme {
+        themeManager.isCandyTheme ? .light : .dark
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
                 TodoPanelView(
-                    theme: .dark,
+                    theme: activeTheme,
                     draftTitle: $store.draftTitle,
                     draftScheduledAt: $store.draftScheduledAt,
                     draftRecurrenceRule: $store.draftRecurrenceRule,
@@ -18,14 +23,14 @@ struct ContentView: View {
                     listScope: store.listScope,
                     isAIParsing: store.isAIParsing,
                     draftValidationMessage: store.draftValidationMessage,
-                    onOpenSettings: {},
+                    onToggleTheme: { themeManager.toggle() },
                     onChangeScope: store.setListScope,
                     onAddReminder: store.addReminder,
                     onAIParse: store.aiParseAndAdd,
                     onDismissDraftValidationMessage: store.clearDraftValidationMessage,
                     onToggleCompletion: store.toggleCompletion,
                     onFocusReminder: store.focusReminder,
-                    onSnoozeReminder: store.snoozeReminder,
+                    onSnoozeReminder: { item, option in store.snoozeReminder(item, after: option) },
                     onDeleteReminder: store.deleteReminder,
                     onClearCompleted: store.clearCompleted
                 )

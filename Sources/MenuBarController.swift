@@ -14,10 +14,13 @@ final class MenuBarController: NSObject, ObservableObject {
 
     private let panelSize = CGSize(width: 320, height: 520)
     private let panelGap: CGFloat = 10
-    private let panelInitialScale: CGFloat = 0.92
-    private let panelSlideOffset: CGFloat = 8
-    private let panelShowDuration: TimeInterval = 0.28
-    private let panelHideDuration: TimeInterval = 0.18
+    private let panelRevealScale: CGFloat = 0.20
+    private let panelShowDuration: TimeInterval = 0.32
+    private let panelHideDuration: TimeInterval = 0.20
+    private let panelShowTimingFunction = CAMediaTimingFunction(controlPoints: 0.16, 1.0, 0.3, 1.0)
+    private let panelHideTimingFunction = CAMediaTimingFunction(controlPoints: 0.32, 0.0, 0.58, 1.0)
+    private let defaultPanelAnchorPoint = CGPoint(x: 0.5, y: 1)
+    private var panelContentAnchorPoint = CGPoint(x: 0.5, y: 1)
 
     init(store: ReminderStore) {
         self.store = store
@@ -121,11 +124,16 @@ final class MenuBarController: NSObject, ObservableObject {
             return
         }
 
+        let statusStyle: MenuStatusGlyphView.Style = {
+            if store.pendingCount == 0 {
+                return .normal
+            }
+
+            return store.highlightedReminder != nil ? .alert : .pending
+        }()
+
         let renderer = ImageRenderer(
-            content: MenuBarStatusIconView(
-                pendingCount: store.pendingCount,
-                hasHighlightedReminder: store.highlightedReminder != nil
-            )
+            content: MenuStatusGlyphView(style: statusStyle, badgeCount: store.pendingCount)
         )
         renderer.scale = NSScreen.main?.backingScaleFactor ?? 2
 
@@ -147,22 +155,31 @@ final class MenuBarController: NSObject, ObservableObject {
 
         store.refreshForPanelPresentation()
         let targetFrame = panelFrame(relativeTo: button)
+        panelContentAnchorPoint = panelRevealAnchorPoint(relativeTo: button, targetFrame: targetFrame)
         panelAnimationToken = UUID()
+        let shouldAnimate = animated && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
 
         panel.setFrame(targetFrame, display: false)
         syncHostingViewLayerGeometry()
 
-        if animated {
-            setPanelContent(scale: panelInitialScale, opacity: 0, translateY: panelSlideOffset)
+        if shouldAnimate {
+            setPanelContent(scale: panelRevealScale, opacity: 0, translateY: 0)
             panel.makeKeyAndOrderFront(nil)
 
-            animatePanelContent(
-                scale: 1,
-                opacity: 1,
-                translateY: 0,
-                duration: panelShowDuration,
-                timingFunction: CAMediaTimingFunction(controlPoints: 0.2, 1.2, 0.4, 1)
-            )
+            let animationToken = panelAnimationToken
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.panelAnimationToken == animationToken, self.panel.isVisible else {
+                    return
+                }
+
+                self.animatePanelContent(
+                    scale: 1,
+                    opacity: 1,
+                    translateY: 0,
+                    duration: self.panelShowDuration,
+                    timingFunction: self.panelShowTimingFunction
+                )
+            }
         } else {
             setPanelContent(scale: 1, opacity: 1, translateY: 0)
             panel.makeKeyAndOrderFront(nil)
@@ -176,27 +193,28 @@ final class MenuBarController: NSObject, ObservableObject {
 
         let animationToken = UUID()
         panelAnimationToken = animationToken
+        let shouldAnimate = animated && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
 
-        if animated {
+        if shouldAnimate {
             syncHostingViewLayerGeometry()
 
             animatePanelContent(
-                scale: panelInitialScale,
+                scale: panelRevealScale,
                 opacity: 0,
-                translateY: panelSlideOffset,
+                translateY: 0,
                 duration: panelHideDuration,
-                timingFunction: CAMediaTimingFunction(name: .easeIn)
+                timingFunction: panelHideTimingFunction
             ) { [weak self] in
                 guard let self, self.panelAnimationToken == animationToken else {
                     return
                 }
 
                 self.panel.orderOut(nil)
-                self.setPanelContent(scale: 1, opacity: 1, translateY: 0)
+                self.resetPanelPresentationState()
             }
         } else {
             panel.orderOut(nil)
-            setPanelContent(scale: 1, opacity: 1, translateY: 0)
+            resetPanelPresentationState()
         }
     }
 
@@ -215,10 +233,37 @@ final class MenuBarController: NSObject, ObservableObject {
 
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        layer.anchorPoint = CGPoint(x: 0.5, y: 1)
-        layer.position = CGPoint(x: hostingView.bounds.midX, y: hostingView.bounds.maxY)
+        layer.anchorPoint = panelContentAnchorPoint
+        layer.position = CGPoint(
+            x: hostingView.bounds.width * panelContentAnchorPoint.x,
+            y: hostingView.bounds.height * panelContentAnchorPoint.y
+        )
         layer.allowsEdgeAntialiasing = true
         CATransaction.commit()
+    }
+
+    private func resetPanelPresentationState() {
+        panelContentAnchorPoint = defaultPanelAnchorPoint
+        syncHostingViewLayerGeometry()
+        setPanelContent(scale: 1, opacity: 1, translateY: 0)
+    }
+
+    private func panelRevealAnchorPoint(relativeTo button: NSStatusBarButton, targetFrame: NSRect) -> CGPoint {
+        guard let window = button.window else {
+            return defaultPanelAnchorPoint
+        }
+
+        let buttonRectInWindow = button.convert(button.bounds, to: nil)
+        let screenRect = window.convertToScreen(buttonRectInWindow)
+
+        guard targetFrame.width > 0, targetFrame.height > 0 else {
+            return defaultPanelAnchorPoint
+        }
+
+        return CGPoint(
+            x: (screenRect.midX - targetFrame.minX) / targetFrame.width,
+            y: (screenRect.midY - targetFrame.minY) / targetFrame.height
+        )
     }
 
     private func setPanelContent(scale: CGFloat, opacity: Float, translateY: CGFloat) {
@@ -333,46 +378,4 @@ final class MenuBarController: NSObject, ObservableObject {
 private final class MenuBarPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
-}
-
-private struct MenuBarStatusIconView: View {
-    let pendingCount: Int
-    let hasHighlightedReminder: Bool
-
-    private var hasPendingItems: Bool {
-        pendingCount > 0
-    }
-
-    private var countText: String {
-        if pendingCount > 99 {
-            return "99+"
-        }
-
-        return "\(max(pendingCount, 1))"
-    }
-
-    var body: some View {
-        Group {
-            if hasPendingItems {
-                Text(countText)
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(hasHighlightedReminder ? RemindersPalette.accentRedDark : RemindersPalette.darkPrimaryText)
-                    .padding(.horizontal, countText.count > 1 ? 2 : 0)
-                    .frame(minWidth: 16, minHeight: 16)
-            } else {
-                Circle()
-                    .stroke(RemindersPalette.darkPrimaryText, lineWidth: 1.5)
-                    .background(Circle().fill(Color.clear))
-                    .frame(width: 16, height: 16)
-                    .overlay {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(RemindersPalette.darkPrimaryText)
-                    }
-            }
-        }
-        .frame(minWidth: 18, minHeight: 18)
-        .padding(1)
-    }
 }

@@ -4,7 +4,7 @@ struct ContextPreviewView: View {
     let reminder: ReminderItem
     let pendingCount: Int
     let onDismiss: () -> Void
-    let onSnooze: () -> Void
+    let onSnooze: (SnoozeOption) -> Void
     let onComplete: () -> Void
 
     private var statusTitle: String {

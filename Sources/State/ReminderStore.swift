@@ -11,7 +11,15 @@ final class ReminderStore: ObservableObject {
         static let advanceNoticeLeadTime: TimeInterval = 3 * 60
     }
 
-    @Published var draftTitle: String = ""
+    static let maxDraftTitleLength = 100
+
+    @Published var draftTitle: String = "" {
+        didSet {
+            let limitedTitle = Self.truncatedDraftTitle(draftTitle)
+            guard limitedTitle != draftTitle else { return }
+            draftTitle = limitedTitle
+        }
+    }
     @Published var draftScheduledAt: Date
     @Published var draftRecurrenceRule: RecurrenceRule?
     @Published var listScope: ReminderListScope = .dueToday
@@ -188,16 +196,24 @@ final class ReminderStore: ObservableObject {
     }
 
     func snoozeHighlightedReminder() {
+        snoozeHighlightedReminder(after: .sixty)
+    }
+
+    func snoozeHighlightedReminder(after option: SnoozeOption) {
         guard let highlightedReminder else { return }
-        snoozeReminder(highlightedReminder)
+        snoozeReminder(highlightedReminder, after: option)
     }
 
     func snoozeReminder(_ item: ReminderItem) {
+        snoozeReminder(item, after: .sixty)
+    }
+
+    func snoozeReminder(_ item: ReminderItem, after option: SnoozeOption) {
         guard let index = index(for: item.id) else { return }
 
         let currentItem = pendingItems[index]
         let snoozeBaseDate = max(Date(), currentItem.scheduledAt)
-        let scheduledAt = snoozeBaseDate.addingTimeInterval(60 * 60)
+        let scheduledAt = snoozeBaseDate.addingTimeInterval(TimeInterval(option.minutes * 60))
 
         let updated = makeItem(
             from: currentItem,
@@ -293,10 +309,10 @@ final class ReminderStore: ObservableObject {
             }
         }
 
-        windowManager.onSnooze = { [weak self] uuid in
+        windowManager.onSnooze = { [weak self] uuid, option in
             guard let self else { return }
             if let item = self.pendingItems.first(where: { $0.id == uuid }) {
-                self.snoozeReminder(item)
+                self.snoozeReminder(item, after: option)
             }
         }
 
@@ -464,6 +480,10 @@ final class ReminderStore: ObservableObject {
     private func makeDraftReminder(referenceDate: Date = Date()) -> ReminderItem? {
         let trimmedTitle = draftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTitle.isEmpty else { return nil }
+        guard trimmedTitle.count <= Self.maxDraftTitleLength else {
+            presentDraftValidation("待办标题最多 100 个字")
+            return nil
+        }
 
         let resolvedScheduledAt: Date
         if let rule = draftRecurrenceRule {
@@ -549,6 +569,10 @@ private extension ReminderStore {
 
     static func tone(for date: Date, referenceDate: Date = Date()) -> ReminderItem.ScheduleTone {
         date.timeIntervalSince(referenceDate) <= 60 * 60 ? .warning : .neutral
+    }
+
+    static func truncatedDraftTitle(_ title: String) -> String {
+        String(title.prefix(maxDraftTitleLength))
     }
 
     func index(for id: ReminderItem.ID) -> Int? {

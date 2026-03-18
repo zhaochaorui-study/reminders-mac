@@ -20,7 +20,7 @@ final class ReminderWindowManager {
     }
 
     var onComplete: ((UUID) -> Void)?
-    var onSnooze: ((UUID) -> Void)?
+    var onSnooze: ((UUID, SnoozeOption) -> Void)?
     var onDismiss: ((UUID) -> Void)?
 
     private var activeWindows: [UUID: NSPanel] = [:]
@@ -54,9 +54,9 @@ final class ReminderWindowManager {
                     self?.dismissWindow(for: reminderID)
                     self?.onComplete?(reminderID)
                 },
-                onSnooze: { [weak self] in
+                onSnooze: { [weak self] option in
                     self?.dismissWindow(for: reminderID)
-                    self?.onSnooze?(reminderID)
+                    self?.onSnooze?(reminderID, option)
                 },
                 onDismiss: { [weak self] in
                     self?.dismissWindow(for: reminderID)
@@ -263,7 +263,7 @@ private struct ReminderAlertContentView: View {
     let title: String
     let scheduleText: String
     let onComplete: () -> Void
-    let onSnooze: () -> Void
+    let onSnooze: (SnoozeOption) -> Void
     let onDismiss: () -> Void
 
     var body: some View {
@@ -303,12 +303,12 @@ private struct ReminderAlertContentView: View {
             .padding(.top, 10)
 
             HStack(spacing: 10) {
-                Button(action: onSnooze) {
-                    Text("稍后提醒")
-                        .font(.system(size: 13, weight: .medium))
-                        .frame(maxWidth: .infinity, minHeight: 32)
-                }
-                .buttonStyle(.bordered)
+                SnoozeOptionMenuButtonView(
+                    title: "稍后提醒",
+                    background: RemindersPalette.elevated,
+                    foreground: RemindersPalette.primaryText,
+                    onSelect: onSnooze
+                )
 
                 Button(action: onComplete) {
                     Text("标记完成")

@@ -11,27 +11,43 @@ struct PanelTheme {
 
 struct PanelHeaderView: View {
     let theme: PanelTheme
-    let onOpenSettings: () -> Void
+    let onToggleTheme: () -> Void
+    @ObservedObject private var themeManager = ThemeManager.shared
+    private let toggleButtonSize: CGFloat = 36
 
     var body: some View {
-        HStack {
+        HStack(spacing: 10) {
             Text("待办提醒")
-                .font(.system(size: 15, weight: .semibold))
+                .font(.system(size: 16, weight: .bold, design: .rounded))
                 .foregroundStyle(RemindersPalette.primaryText)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(RemindersPalette.card)
+                )
 
             Spacer()
 
-            Button(action: onOpenSettings) {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(RemindersPalette.secondaryText)
-                    .frame(width: 32, height: 32)
-                    .background(RemindersPalette.card, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            Button(action: onToggleTheme) {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(RemindersPalette.card)
+                    .overlay {
+                        Image(systemName: themeManager.isCandyTheme ? "moon.stars.fill" : "sun.max.fill")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(themeManager.isCandyTheme ? RemindersPalette.accentBlue : RemindersPalette.accentOrange)
+                    }
+                    .frame(width: toggleButtonSize, height: toggleButtonSize)
+                    .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
             .buttonStyle(.plain)
+            .help("切换主题")
         }
-        .frame(height: 44)
+        .frame(height: 48)
+        .frame(maxWidth: .infinity)
         .padding(.horizontal, 16)
+        .background(Color.clear)
+        .contentShape(Rectangle())
     }
 }
 
@@ -41,29 +57,63 @@ struct ListScopeSegmentedControlView: View {
     let theme: PanelTheme
     let selectedScope: ReminderListScope
     let onSelect: (ReminderListScope) -> Void
+    @ObservedObject private var themeManager = ThemeManager.shared
+
+    private var isCandy: Bool { themeManager.isCandyTheme }
+
+    private func candyColor(for scope: ReminderListScope) -> Color {
+        scope == .createdToday ? RemindersPalette.accentGreen : RemindersPalette.accentBlue
+    }
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: isCandy ? 8 : 4) {
             ForEach(ReminderListScope.allCases) { scope in
                 Button(action: { onSelect(scope) }) {
                     Text(scope.title)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(scope == selectedScope ? RemindersPalette.primaryText : RemindersPalette.tertiaryText)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 32)
-                        .background(
-                            scope == selectedScope
-                                ? RemindersPalette.elevated
-                                : Color.clear,
-                            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .font(.system(size: isCandy ? 14 : 12, weight: isCandy ? .bold : .medium, design: isCandy ? .rounded : .default))
+                        .foregroundStyle(
+                            isCandy
+                                ? (scope == selectedScope ? Color(hex: 0xFBF8F2) : RemindersPalette.primaryText)
+                                : (scope == selectedScope ? RemindersPalette.primaryText : RemindersPalette.tertiaryText)
                         )
+                        .frame(maxWidth: .infinity)
+                        .frame(height: isCandy ? 40 : 32)
+                        .background {
+                            if isCandy {
+                                if scope == selectedScope {
+                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                        .fill(
+                                            LinearGradient(
+                                                colors: [candyColor(for: scope), candyColor(for: scope).opacity(0.8)],
+                                                startPoint: .top,
+                                                endPoint: .bottom
+                                            )
+                                        )
+                                } else {
+                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                        .fill(candyColor(for: scope).opacity(0.15))
+                                }
+                            } else {
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(scope == selectedScope ? RemindersPalette.elevated : Color.clear)
+                            }
+                        }
                 }
                 .buttonStyle(.borderless)
                 .contentShape(Rectangle())
             }
         }
-        .padding(4)
-        .background(RemindersPalette.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .padding(isCandy ? 5 : 4)
+        .background(
+            RemindersPalette.card,
+            in: RoundedRectangle(cornerRadius: isCandy ? 16 : 10, style: .continuous)
+        )
+        .overlay {
+            if isCandy {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(RemindersPalette.border.opacity(0.8), lineWidth: 0.8)
+            }
+        }
     }
 }
 
@@ -108,6 +158,10 @@ struct AddReminderBarView: View {
 
     @State private var isCalendarExpanded = false
     @State private var cronInput: String = ""
+    @ObservedObject private var themeManager = ThemeManager.shared
+    private let schedulePickerOffsetY: CGFloat = 46
+
+    private var isCandy: Bool { themeManager.isCandyTheme }
 
     private var canSubmit: Bool {
         !draftTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -169,37 +223,64 @@ struct AddReminderBarView: View {
     var body: some View {
         VStack(spacing: 8) {
             HStack(spacing: 8) {
-                TextField("", text: $draftTitle, prompt: Text("添加新待办...").foregroundStyle(RemindersPalette.tertiaryText))
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13))
-                    .foregroundStyle(RemindersPalette.primaryText)
-                    .onSubmit(onAdd)
-                    .padding(.horizontal, 12)
-                    .frame(height: 40)
-                    .background(RemindersPalette.field, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                ZStack(alignment: .leading) {
+                    if draftTitle.isEmpty {
+                        Text("添加新待办...")
+                            .font(.system(size: 13, weight: .semibold, design: isCandy ? .rounded : .default))
+                            .foregroundStyle(RemindersPalette.primaryText.opacity(isCandy ? 0.72 : 0.56))
+                            .padding(.horizontal, 12)
+                            .allowsHitTesting(false)
+                    }
+
+                    TextField("", text: $draftTitle)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 13, weight: isCandy ? .semibold : .regular, design: isCandy ? .rounded : .default))
+                        .foregroundStyle(RemindersPalette.primaryText)
+                        .onSubmit(onAdd)
+                        .padding(.horizontal, 12)
+                        .frame(height: 42)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
+                .background(
+                    isCandy ? RemindersPalette.candyFieldBlue : RemindersPalette.field,
+                    in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+                )
+                .overlay {
+                    if isCandy {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(RemindersPalette.accentBlue.opacity(0.32), lineWidth: 1)
+                    }
+                }
+                .shadow(color: RemindersPalette.shadow.opacity(isCandy ? 0.18 : 0.06), radius: 8, x: 0, y: 2)
 
                 Button(action: onAIParse) {
                     Group {
                         if isAIParsing {
                             ProgressView()
+                                .tint(RemindersPalette.primaryText)
                                 .scaleEffect(0.65)
                                 .frame(width: 14, height: 14)
                         } else {
                             Image(systemName: "wand.and.stars")
-                                .font(.system(size: 14, weight: .semibold))
+                                .font(.system(size: 15, weight: .semibold))
                         }
                     }
-                    .foregroundStyle(.white)
-                    .frame(width: 40, height: 40)
-                    .background(
-                        LinearGradient(
-                            colors: [Color(hex: 0x7B5EF0), Color(hex: 0x5B8DEF)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    )
-                    .opacity(canSubmit && !isAIParsing ? 1 : 0.35)
+                    .foregroundStyle(RemindersPalette.primaryText)
+                    .frame(width: 42, height: 42)
+                    .background {
+                        RoundedRectangle(cornerRadius: isCandy ? 14 : 10, style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: isCandy
+                                        ? [RemindersPalette.accentBlue, Color(hex: 0x4B6F95)]
+                                        : [Color(hex: 0x7B5EF0), Color(hex: 0x5B8DEF)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .opacity(canSubmit && !isAIParsing ? 1 : 0.62)
+                    }
                 }
                 .buttonStyle(.plain)
                 .disabled(!canSubmit || isAIParsing)
@@ -207,11 +288,18 @@ struct AddReminderBarView: View {
 
                 Button(action: onAdd) {
                     Image(systemName: "plus")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 40, height: 40)
-                        .background(RemindersPalette.accentBlue, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .opacity(canSubmit ? 1 : 0.4)
+                        .font(.system(size: 17, weight: .heavy))
+                        .foregroundStyle(RemindersPalette.primaryText)
+                        .frame(width: 42, height: 42)
+                        .background {
+                            RoundedRectangle(cornerRadius: isCandy ? 14 : 10, style: .continuous)
+                                .fill(
+                                    isCandy
+                                        ? AnyShapeStyle(LinearGradient(colors: [RemindersPalette.accentGreen, Color(hex: 0x4E725F)], startPoint: .top, endPoint: .bottom))
+                                        : AnyShapeStyle(RemindersPalette.accentBlue)
+                                )
+                                .opacity(canSubmit ? 1 : 0.62)
+                        }
                 }
                 .buttonStyle(.plain)
                 .disabled(!canSubmit)
@@ -225,71 +313,49 @@ struct AddReminderBarView: View {
                 }) {
                     HStack(spacing: 6) {
                         Image(systemName: "calendar")
-                            .font(.system(size: 11, weight: .medium))
+                            .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(RemindersPalette.accentBlue)
                         Text(scheduleLabel)
-                            .font(.system(size: 12, weight: .medium))
+                            .font(.system(size: 12, weight: .semibold, design: isCandy ? .rounded : .default))
                             .foregroundStyle(RemindersPalette.primaryText)
                         Spacer()
                         Image(systemName: isCalendarExpanded ? "chevron.up" : "chevron.down")
                             .font(.system(size: 9, weight: .medium))
-                            .foregroundStyle(RemindersPalette.tertiaryText)
+                            .foregroundStyle(isCandy ? RemindersPalette.accentOrange : RemindersPalette.tertiaryText)
                     }
                     .padding(.horizontal, 12)
-                    .frame(height: 34)
-                    .background(RemindersPalette.field, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .frame(height: 38)
+                    .background(
+                        isCandy ? RemindersPalette.candyCardYellow : RemindersPalette.field,
+                        in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    )
+                    .overlay {
+                        if isCandy {
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(RemindersPalette.accentBlue.opacity(0.18), lineWidth: 1)
+                        }
+                    }
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-
-                if isCalendarExpanded {
-                    VStack(spacing: 6) {
-                        if !isRecurringMode {
-                            DatePicker(
-                                "",
-                                selection: $draftScheduledAt,
-                                in: minimumSelectableDate...,
-                                displayedComponents: [.date]
-                            )
-                            .datePickerStyle(.graphical)
-                            .labelsHidden()
-                            .tint(RemindersPalette.accentBlue)
-                            .frame(maxHeight: 220)
-                        }
-
-                        HStack(spacing: 8) {
-                            Image(systemName: "clock")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(RemindersPalette.secondaryText)
-
-                            DatePicker(
-                                "",
-                                selection: $draftScheduledAt,
-                                in: minimumSelectableDate...,
-                                displayedComponents: [.hourAndMinute]
-                            )
-                            .datePickerStyle(.stepperField)
-                            .labelsHidden()
-                            .tint(RemindersPalette.accentBlue)
-
-                            Spacer()
-
-                            Button("确定") {
+                .overlay(alignment: .topLeading) {
+                    if isCalendarExpanded {
+                        ScheduleDateTimePickerView(
+                            selection: $draftScheduledAt,
+                            minimumDate: minimumSelectableDate,
+                            isRecurringMode: isRecurringMode,
+                            onConfirm: {
                                 withAnimation(.easeInOut(duration: 0.2)) {
                                     isCalendarExpanded = false
                                 }
                             }
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(RemindersPalette.accentBlue)
-                            .buttonStyle(.plain)
-                        }
-                        .padding(.horizontal, 8)
-                        .frame(height: 28)
+                        )
+                        .offset(y: schedulePickerOffsetY)
+                        .transition(.opacity)
+                        .zIndex(20)
                     }
-                    .padding(8)
-                    .background(RemindersPalette.field, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
+                .zIndex(isCalendarExpanded ? 20 : 0)
             }
 
             RecurrenceRulePicker(
@@ -297,6 +363,8 @@ struct AddReminderBarView: View {
                 scheduledAt: draftScheduledAt,
                 cronInput: $cronInput
             )
+            .allowsHitTesting(!isCalendarExpanded)
+            .opacity(isCalendarExpanded ? 0.3 : 1)
 
             if let validationMessage {
                 HStack(spacing: 6) {
@@ -311,7 +379,7 @@ struct AddReminderBarView: View {
                 .foregroundStyle(RemindersPalette.accentRed)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
-                .background(Color(hex: 0x341A1A), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .background(RemindersPalette.validationBg, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .stroke(RemindersPalette.accentRed.opacity(0.28), lineWidth: 0.8)
@@ -379,6 +447,9 @@ struct RecurrenceRulePicker: View {
     @Binding var rule: RecurrenceRule?
     let scheduledAt: Date
     @Binding var cronInput: String
+    @ObservedObject private var themeManager = ThemeManager.shared
+
+    private var isCandy: Bool { themeManager.isCandyTheme }
 
     private var pickerMode: RecurrencePickerMode {
         guard let rule else { return .none }
@@ -389,29 +460,61 @@ struct RecurrenceRulePicker: View {
         }
     }
 
+    private func candyPillColor(for mode: RecurrencePickerMode) -> Color {
+        switch mode {
+        case .none: return RemindersPalette.accentOrange
+        case .daily: return RemindersPalette.accentGreen
+        case .weekly: return RemindersPalette.accentBlue
+        case .cron: return RemindersPalette.accentPurple
+        }
+    }
+
     var body: some View {
         VStack(spacing: 6) {
-            HStack(spacing: 4) {
+            HStack(spacing: isCandy ? 6 : 4) {
                 ForEach(RecurrencePickerMode.allCases, id: \.rawValue) { mode in
                     Button(action: { selectMode(mode) }) {
                         Text(mode.label)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(pickerMode == mode ? RemindersPalette.primaryText : RemindersPalette.tertiaryText)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 28)
-                            .background(
-                                pickerMode == mode
-                                    ? RemindersPalette.elevated
-                                    : Color.clear,
-                                in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .font(.system(size: isCandy ? 12 : 11, weight: isCandy ? .bold : .medium, design: isCandy ? .rounded : .default))
+                            .foregroundStyle(
+                                isCandy
+                                    ? (pickerMode == mode ? Color(hex: 0xFBF8F2) : RemindersPalette.primaryText)
+                                    : (pickerMode == mode ? RemindersPalette.primaryText : RemindersPalette.tertiaryText)
                             )
+                            .frame(maxWidth: .infinity)
+                            .frame(height: isCandy ? 32 : 28)
+                            .background {
+                                if isCandy {
+                                    Capsule(style: .continuous)
+                                        .fill(
+                                            pickerMode == mode
+                                                ? candyPillColor(for: mode)
+                                                : candyPillColor(for: mode).opacity(0.2)
+                                        )
+                                } else {
+                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                        .fill(pickerMode == mode ? RemindersPalette.elevated : Color.clear)
+                                }
+                            }
                     }
                     .buttonStyle(.borderless)
                     .contentShape(Rectangle())
                 }
             }
-            .padding(3)
-            .background(RemindersPalette.card, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .padding(isCandy ? 4 : 3)
+            .background {
+                if isCandy {
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .fill(RemindersPalette.card)
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                .stroke(RemindersPalette.border, lineWidth: 0.8)
+                        }
+                } else {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(RemindersPalette.card)
+                }
+            }
 
             if pickerMode == .cron {
                 HStack(spacing: 6) {
@@ -486,10 +589,13 @@ struct ReminderRowView: View {
     let isFocused: Bool
     let onToggleCompletion: () -> Void
     let onFocus: () -> Void
-    let onSnooze: () -> Void
+    let onSnooze: (SnoozeOption) -> Void
     let onDelete: () -> Void
 
     @State private var isHovered = false
+    @ObservedObject private var themeManager = ThemeManager.shared
+
+    private var isCandy: Bool { themeManager.isCandyTheme }
 
     private var isExecutionHighlighted: Bool {
         !item.isCompleted && (isFocused || item.tone == .warning)
@@ -501,93 +607,100 @@ struct ReminderRowView: View {
 
     private var scheduleColor: Color {
         switch item.tone {
-        case .warning: return Color(hex: 0xFF8A78)
+        case .warning: return isCandy ? RemindersPalette.accentOrange : Color(hex: 0xFF8A78)
         case .completed: return RemindersPalette.tertiaryText
         case .neutral: return RemindersPalette.secondaryText
         }
     }
 
     private var titleColor: Color {
-        if item.isCompleted {
-            return RemindersPalette.tertiaryText
-        }
-
-        if isExecutionHighlighted {
-            return Color(hex: 0xFFF6F1)
-        }
-
-        if isHoverActive {
-            return Color(hex: 0xFCFCFF)
-        }
-
+        if item.isCompleted { return RemindersPalette.tertiaryText }
+        if isExecutionHighlighted { return isCandy ? Color(hex: 0x55473F) : Color(hex: 0xFFF6F1) }
+        if isHoverActive { return isCandy ? Color(hex: 0x4A3D37) : Color(hex: 0xFCFCFF) }
         return RemindersPalette.primaryText
     }
 
     private var rowGradientColors: [Color] {
-        if isExecutionHighlighted {
-            if isHoverActive {
-                return [
-                    Color(hex: 0x74413B),
-                    Color(hex: 0x593735),
-                    Color(hex: 0x412C2A)
-                ]
+        if isCandy {
+            if isExecutionHighlighted {
+                return isHoverActive
+                    ? [Color(hex: 0xFAEEDD), Color(hex: 0xF5E2CC)]
+                    : [Color(hex: 0xF9F0E2), Color(hex: 0xF4E7D6)]
             }
-
-            return [
-                Color(hex: 0x6A3B36),
-                Color(hex: 0x4E322E),
-                Color(hex: 0x382725)
-            ]
+            if isFocused { return [Color(hex: 0xEEF5EE), Color(hex: 0xE7F0E8)] }
+            if isHoverActive { return [Color(hex: 0xF6F1E7), Color(hex: 0xF1EBDF)] }
+            return [Color(hex: 0xF5EFE5), Color(hex: 0xF0E9DE)]
+        } else {
+            if isExecutionHighlighted {
+                return isHoverActive
+                    ? [Color(hex: 0x74413B), Color(hex: 0x593735), Color(hex: 0x412C2A)]
+                    : [Color(hex: 0x6A3B36), Color(hex: 0x4E322E), Color(hex: 0x382725)]
+            }
+            if isFocused { return [RemindersPalette.elevated, RemindersPalette.card] }
+            if isHoverActive { return [Color(hex: 0x36363A), Color(hex: 0x2D2D30)] }
+            return [RemindersPalette.card, Color(hex: 0x262628)]
         }
-
-        if isFocused {
-            return [RemindersPalette.elevated, RemindersPalette.card]
-        }
-
-        if isHoverActive {
-            return [Color(hex: 0x36363A), Color(hex: 0x2D2D30)]
-        }
-
-        return [RemindersPalette.card, Color(hex: 0x262628)]
     }
 
     private var rowBorderColor: Color {
         if isExecutionHighlighted {
-            return Color(hex: 0xFF8A78, opacity: isHoverActive ? 0.84 : 0.72)
+            return isCandy
+                ? Color(hex: 0xB27744, opacity: isHoverActive ? 0.58 : 0.42)
+                : Color(hex: 0xFF8A78, opacity: isHoverActive ? 0.84 : 0.72)
         }
-
-        if isHoverActive {
-            return RemindersPalette.accentBlue.opacity(0.58)
-        }
-
-        if isFocused {
-            return RemindersPalette.accentBlue.opacity(0.42)
-        }
-
-        return RemindersPalette.border.opacity(0.42)
+        if isHoverActive { return RemindersPalette.accentBlue.opacity(isCandy ? 0.28 : 0.58) }
+        if isFocused { return RemindersPalette.accentBlue.opacity(isCandy ? 0.22 : 0.42) }
+        return isCandy ? Color(hex: 0xD8D1C4, opacity: 0.8) : RemindersPalette.border.opacity(0.42)
     }
 
     private var rowShadowColor: Color {
+        if isCandy {
+            if isExecutionHighlighted { return Color(hex: 0xB27744, opacity: isHoverActive ? 0.16 : 0.11) }
+            if isHoverActive { return RemindersPalette.accentBlue.opacity(0.08) }
+            return Color(hex: 0x927B61, opacity: 0.08)
+        } else {
+            if isExecutionHighlighted { return Color(hex: 0xFF5A6E, opacity: isHoverActive ? 0.28 : 0.22) }
+            if isHoverActive { return RemindersPalette.accentBlue.opacity(0.16) }
+            if isFocused { return Color.black.opacity(0.24) }
+            return Color.black.opacity(0.12)
+        }
+    }
+
+    private var menuButtonFillColor: Color {
         if isExecutionHighlighted {
-            return Color(hex: 0xFF5A6E, opacity: isHoverActive ? 0.28 : 0.22)
+            return isCandy ? Color(hex: 0xF2E2CF, opacity: 0.96) : Color(hex: 0x4A2E2B, opacity: 0.9)
         }
-
-        if isHoverActive {
-            return RemindersPalette.accentBlue.opacity(0.16)
+        if isCandy {
+            return isHoverActive ? Color(hex: 0xE6D8C5, opacity: 0.98) : Color(hex: 0xEDE1D1, opacity: 0.94)
         }
+        return isHoverActive ? RemindersPalette.elevated.opacity(0.92) : RemindersPalette.field.opacity(0.86)
+    }
 
-        if isFocused {
-            return Color.black.opacity(0.24)
+    private var menuButtonBorderColor: Color {
+        if isExecutionHighlighted {
+            return isCandy ? RemindersPalette.accentOrange.opacity(0.24) : Color(hex: 0xFF8A78, opacity: 0.28)
         }
+        if isCandy {
+            return Color(hex: 0xCDBDA8, opacity: 0.8)
+        }
+        return RemindersPalette.border.opacity(0.7)
+    }
 
-        return Color.black.opacity(0.12)
+    private var menuButtonIconColor: Color {
+        if isExecutionHighlighted {
+            return isCandy ? RemindersPalette.accentOrange : Color(hex: 0xFFD5C8)
+        }
+        if isCandy {
+            return Color(hex: 0x7A6E61)
+        }
+        return RemindersPalette.secondaryText
     }
 
     var body: some View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: isExecutionHighlighted ? 5 : 3) {
                 Text(item.title)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: 13, weight: isCandy ? .bold : .medium, design: isCandy ? .rounded : .default))
                     .foregroundStyle(titleColor)
                     .strikethrough(item.isCompleted, color: RemindersPalette.secondaryText)
                     .lineLimit(1)
@@ -596,7 +709,7 @@ struct ReminderRowView: View {
                     if isExecutionHighlighted {
                         Image(systemName: "bolt.fill")
                             .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(Color(hex: 0xFFB38A))
+                            .foregroundStyle(isCandy ? RemindersPalette.accentOrange : Color(hex: 0xFFB38A))
                     }
 
                     Text(item.scheduleText)
@@ -608,10 +721,10 @@ struct ReminderRowView: View {
                 .background {
                     if isExecutionHighlighted {
                         Capsule(style: .continuous)
-                            .fill(Color(hex: 0x2B1718, opacity: 0.82))
+                            .fill(isCandy ? Color(hex: 0xF5E8D9, opacity: 0.9) : Color(hex: 0x2B1718, opacity: 0.82))
                             .overlay {
                                 Capsule(style: .continuous)
-                                    .stroke(Color(hex: 0xFF8A78, opacity: 0.26), lineWidth: 0.8)
+                                    .stroke(isCandy ? RemindersPalette.accentOrange.opacity(0.28) : Color(hex: 0xFF8A78, opacity: 0.26), lineWidth: 0.8)
                             }
                     }
                 }
@@ -637,8 +750,14 @@ struct ReminderRowView: View {
                         Button(action: onFocus) {
                             Label(isFocused ? "收起提醒" : "查看提醒", systemImage: "bell")
                         }
-                        Button(action: onSnooze) {
-                            Label("稍后 1 小时", systemImage: "clock.badge.plus")
+                        Menu {
+                            ForEach(SnoozeOption.allCases) { option in
+                                Button(option.title) {
+                                    onSnooze(option)
+                                }
+                            }
+                        } label: {
+                            Label("稍后提醒", systemImage: "clock.badge.plus")
                         }
                     }
                     Divider()
@@ -646,20 +765,29 @@ struct ReminderRowView: View {
                         Label("删除", systemImage: "trash")
                     }
                 } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(isExecutionHighlighted ? Color(hex: 0xFFD5C8) : RemindersPalette.tertiaryText)
-                        .frame(width: 28, height: 28)
-                        .contentShape(Rectangle())
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(menuButtonFillColor)
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .stroke(menuButtonBorderColor, lineWidth: 0.8)
+                        }
+                        .overlay {
+                            Image(systemName: "ellipsis")
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundStyle(menuButtonIconColor)
+                        }
+                        .frame(width: 32, height: 30)
+                        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
                 .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
                 .fixedSize()
             }
         }
         .padding(.horizontal, 12)
         .frame(minHeight: isExecutionHighlighted ? 58 : 52)
         .background {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(
                     LinearGradient(
                         colors: rowGradientColors,
@@ -668,13 +796,13 @@ struct ReminderRowView: View {
                     )
                 )
                 .overlay {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
                         .stroke(rowBorderColor, lineWidth: isExecutionHighlighted ? 1.1 : 0.75)
                 }
                 .overlay {
                     if isHoverActive {
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(Color.white.opacity(0.05), lineWidth: 0.8)
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(isCandy ? Color(hex: 0xDCC9B8, opacity: 0.35) : Color.white.opacity(0.05), lineWidth: 0.8)
                             .padding(1)
                     }
                 }
@@ -682,7 +810,7 @@ struct ReminderRowView: View {
         .shadow(color: rowShadowColor, radius: isExecutionHighlighted ? (isHoverActive ? 20 : 16) : (isHoverActive ? 14 : 10), x: 0, y: isExecutionHighlighted ? (isHoverActive ? 12 : 10) : (isHoverActive ? 8 : 6))
         .scaleEffect(isHoverActive ? 1.012 : 1)
         .offset(y: isHoverActive ? -1 : 0)
-        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .onHover { hovering in
             isHovered = !item.isCompleted && hovering
         }
@@ -695,11 +823,28 @@ struct ReminderRowView: View {
 
 struct DividerLineView: View {
     let color: Color
+    @ObservedObject private var themeManager = ThemeManager.shared
 
     var body: some View {
-        Rectangle()
-            .fill(color)
-            .frame(height: 0.5)
+        if themeManager.isCandyTheme {
+            Line()
+                .stroke(style: StrokeStyle(lineWidth: 1, dash: [6, 4]))
+                .foregroundStyle(RemindersPalette.dividerDash)
+                .frame(height: 1)
+        } else {
+            Rectangle()
+                .fill(color)
+                .frame(height: 0.5)
+        }
+    }
+}
+
+private struct Line: Shape {
+    func path(in rect: CGRect) -> Path {
+        Path { p in
+            p.move(to: CGPoint(x: 0, y: rect.midY))
+            p.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
+        }
     }
 }
 
@@ -751,7 +896,7 @@ struct CompletedHistoryOverlayView: View {
     var body: some View {
         ZStack(alignment: .bottom) {
             Rectangle()
-                .fill(Color.black.opacity(0.18))
+                .fill(RemindersPalette.overlayDim)
                 .ignoresSafeArea()
                 .onTapGesture(perform: onClose)
 
@@ -806,7 +951,7 @@ struct CompletedHistoryOverlayView: View {
                                         isFocused: false,
                                         onToggleCompletion: {},
                                         onFocus: {},
-                                        onSnooze: {},
+                                        onSnooze: { _ in },
                                         onDelete: { onDelete(item) }
                                     )
                                 }
@@ -831,6 +976,37 @@ struct CompletedHistoryOverlayView: View {
 }
 
 // MARK: - Popup Action Button
+
+struct SnoozeOptionMenuButtonView: View {
+    let title: String
+    let background: Color
+    let foreground: Color
+    let onSelect: (SnoozeOption) -> Void
+
+    var body: some View {
+        Menu {
+            ForEach(SnoozeOption.allCases) { option in
+                Button(option.title) {
+                    onSelect(option)
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            .frame(maxWidth: .infinity, minHeight: 36)
+            .foregroundStyle(foreground)
+            .background(background, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
 
 struct PopupActionButtonView: View {
     let title: String
@@ -870,21 +1046,33 @@ struct MenuStatusGlyphView: View {
         Group {
             if style == .normal {
                 Circle()
-                    .stroke(RemindersPalette.primaryText, lineWidth: 1.5)
-                    .background(Circle().fill(Color.clear))
-                    .frame(width: 16, height: 16)
+                    .fill(RemindersPalette.menuBarBadgeBackground)
+                    .overlay {
+                        Circle()
+                            .stroke(RemindersPalette.menuBarBadgeBorder, lineWidth: 0.8)
+                    }
+                    .frame(width: 18, height: 18)
                     .overlay {
                         Image(systemName: "checkmark")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(RemindersPalette.primaryText)
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(RemindersPalette.menuBarBadgeText)
                     }
             } else {
                 Text(pendingBadgeText)
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .font(.system(size: pendingBadgeText.count > 1 ? 11 : 12, weight: .bold, design: .rounded))
                     .monospacedDigit()
-                    .foregroundStyle(style == .alert ? RemindersPalette.accentRed : RemindersPalette.primaryText)
-                    .padding(.horizontal, pendingBadgeText.count > 1 ? 2 : 0)
-                    .frame(minWidth: 16, minHeight: 16)
+                    .foregroundStyle(style == .alert ? RemindersPalette.accentRed : RemindersPalette.menuBarBadgeText)
+                    .padding(.horizontal, pendingBadgeText.count > 1 ? 5 : 4)
+                    .padding(.vertical, 2)
+                    .background {
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(RemindersPalette.menuBarBadgeBackground)
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .stroke(RemindersPalette.menuBarBadgeBorder, lineWidth: 0.8)
+                            }
+                    }
+                    .shadow(color: RemindersPalette.shadow.opacity(0.16), radius: 1, x: 0, y: 0.5)
             }
         }
         .frame(minWidth: 22, minHeight: 22)

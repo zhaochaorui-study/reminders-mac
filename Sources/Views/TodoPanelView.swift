@@ -1,6 +1,14 @@
 import SwiftUI
 
 struct TodoPanelView: View {
+    private enum Layout {
+        static let panelSize = CGSize(width: 320, height: 520)
+        static let panelCornerRadius: CGFloat = 20
+        static let dividerVerticalPadding: CGFloat = 6
+        static let emptyStateVerticalPadding: CGFloat = 10
+        static let historyAnimationDuration: Double = 0.18
+    }
+
     let theme: PanelTheme
     @Binding var draftTitle: String
     @Binding var draftScheduledAt: Date
@@ -12,22 +20,38 @@ struct TodoPanelView: View {
     let listScope: ReminderListScope
     let isAIParsing: Bool
     let draftValidationMessage: String?
-    let onOpenSettings: () -> Void
+    let onToggleTheme: () -> Void
     let onChangeScope: (ReminderListScope) -> Void
     let onAddReminder: () -> Void
     let onAIParse: () -> Void
     let onDismissDraftValidationMessage: () -> Void
     let onToggleCompletion: (ReminderItem) -> Void
     let onFocusReminder: (ReminderItem) -> Void
-    let onSnoozeReminder: (ReminderItem) -> Void
+    let onSnoozeReminder: (ReminderItem, SnoozeOption) -> Void
     let onDeleteReminder: (ReminderItem) -> Void
     let onClearCompleted: () -> Void
 
     @State private var isShowingCompletedHistory = false
 
     var body: some View {
+        panelContent
+            .frame(width: Layout.panelSize.width, height: Layout.panelSize.height)
+            .background(RemindersPalette.panel)
+            .clipShape(panelShape)
+            .overlay {
+                panelShape
+                    .stroke(RemindersPalette.border.opacity(0.6), lineWidth: 0.5)
+            }
+            .overlay {
+                historyOverlay
+            }
+            .shadow(color: RemindersPalette.shadow, radius: 20, x: 0, y: 10)
+    }
+
+    private var panelContent: some View {
         VStack(spacing: 0) {
-            PanelHeaderView(theme: theme, onOpenSettings: onOpenSettings)
+            PanelHeaderView(theme: theme, onToggleTheme: onToggleTheme)
+                .zIndex(3)
 
             AddReminderBarView(
                 theme: theme,
@@ -40,43 +64,21 @@ struct TodoPanelView: View {
                 onAIParse: onAIParse,
                 onDismissValidationMessage: onDismissDraftValidationMessage
             )
+            .zIndex(2)
 
             ListScopeSegmentedControlView(
                 theme: theme,
                 selectedScope: listScope,
                 onSelect: onChangeScope
             )
+            .zIndex(1)
             .padding(.horizontal, RemindersLayout.panelHorizontalInset)
-            .padding(.vertical, 6)
+            .padding(.vertical, Layout.dividerVerticalPadding)
 
             DividerLineView(color: RemindersPalette.border)
                 .padding(.horizontal, RemindersLayout.panelHorizontalInset)
 
-            Group {
-                if items.isEmpty {
-                    ReminderEmptyStateView(theme: theme, scope: listScope)
-                        .padding(.vertical, 10)
-                } else {
-                    ScrollView(.vertical, showsIndicators: true) {
-                        LazyVStack(spacing: RemindersLayout.listRowSpacing) {
-                            ForEach(items) { item in
-                                ReminderRowView(
-                                    item: item,
-                                    theme: theme,
-                                    isFocused: highlightedReminderID == item.id,
-                                    onToggleCompletion: { onToggleCompletion(item) },
-                                    onFocus: { onFocusReminder(item) },
-                                    onSnooze: { onSnoozeReminder(item) },
-                                    onDelete: { onDeleteReminder(item) }
-                                )
-                            }
-                        }
-                        .padding(.horizontal, RemindersLayout.panelHorizontalInset)
-                        .padding(.vertical, RemindersLayout.listVerticalInset)
-                    }
-                    .scrollBounceBehavior(.basedOnSize)
-                }
-            }
+            reminderListSection
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
             DividerLineView(color: RemindersPalette.border)
@@ -85,36 +87,69 @@ struct TodoPanelView: View {
             CompletedFooterView(
                 theme: theme,
                 count: completedCount,
-                onShowHistory: {
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        isShowingCompletedHistory = true
-                    }
-                },
+                onShowHistory: showCompletedHistory,
                 onClear: onClearCompleted
             )
         }
-        .frame(width: 320, height: 520)
-        .background(RemindersPalette.panel)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(RemindersPalette.border.opacity(0.6), lineWidth: 0.5)
-        }
-        .overlay {
-            if isShowingCompletedHistory {
-                CompletedHistoryOverlayView(
-                    theme: theme,
-                    items: completedHistoryItems,
-                    onClose: {
-                        withAnimation(.easeInOut(duration: 0.18)) {
-                            isShowingCompletedHistory = false
-                        }
-                    },
-                    onDelete: onDeleteReminder
-                )
-                .transition(.opacity)
+    }
+
+    @ViewBuilder
+    private var reminderListSection: some View {
+        if items.isEmpty {
+            ReminderEmptyStateView(theme: theme, scope: listScope)
+                .padding(.vertical, Layout.emptyStateVerticalPadding)
+        } else {
+            ScrollView(.vertical, showsIndicators: true) {
+                LazyVStack(spacing: RemindersLayout.listRowSpacing) {
+                    ForEach(items) { item in
+                        reminderRow(for: item)
+                    }
+                }
+                .padding(.horizontal, RemindersLayout.panelHorizontalInset)
+                .padding(.vertical, RemindersLayout.listVerticalInset)
             }
+            .scrollBounceBehavior(.basedOnSize)
         }
-        .shadow(color: RemindersPalette.shadow, radius: 20, x: 0, y: 10)
+    }
+
+    @ViewBuilder
+    private var historyOverlay: some View {
+        if isShowingCompletedHistory {
+            CompletedHistoryOverlayView(
+                theme: theme,
+                items: completedHistoryItems,
+                onClose: hideCompletedHistory,
+                onDelete: onDeleteReminder
+            )
+            .transition(.opacity)
+        }
+    }
+
+    private var panelShape: some InsettableShape {
+        RoundedRectangle(cornerRadius: Layout.panelCornerRadius, style: .continuous)
+    }
+
+    private func reminderRow(for item: ReminderItem) -> some View {
+        ReminderRowView(
+            item: item,
+            theme: theme,
+            isFocused: highlightedReminderID == item.id,
+            onToggleCompletion: { onToggleCompletion(item) },
+            onFocus: { onFocusReminder(item) },
+            onSnooze: { option in onSnoozeReminder(item, option) },
+            onDelete: { onDeleteReminder(item) }
+        )
+    }
+
+    private func hideCompletedHistory() {
+        withAnimation(.easeInOut(duration: Layout.historyAnimationDuration)) {
+            isShowingCompletedHistory = false
+        }
+    }
+
+    private func showCompletedHistory() {
+        withAnimation(.easeInOut(duration: Layout.historyAnimationDuration)) {
+            isShowingCompletedHistory = true
+        }
     }
 }
