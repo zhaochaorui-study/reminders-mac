@@ -1117,95 +1117,11 @@ struct ReminderRowView: View {
 
     @ViewBuilder
     private var menuTriggerLabel: some View {
-        if isCandy {
-            ZStack {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [Color(hex: 0xFFF9F1), Color(hex: 0xEEDBC4)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .overlay {
-                        Circle()
-                            .stroke(Color(hex: 0xD6B28A, opacity: 0.95), lineWidth: 0.85)
-                    }
-                    .overlay(alignment: .topLeading) {
-                        Circle()
-                            .stroke(Color.white.opacity(0.72), lineWidth: 0.7)
-                            .padding(1.1)
-                    }
-
-                Circle()
-                    .fill(Color(hex: 0x9D7A55, opacity: 0.08))
-                    .frame(width: 15, height: 15)
-                    .blur(radius: 0.3)
-                    .offset(x: 0.4, y: 0.8)
-
-                Capsule(style: .continuous)
-                    .fill(Color.white.opacity(0.62))
-                    .frame(width: 8, height: 3)
-                    .blur(radius: 0.35)
-                    .offset(x: -2.8, y: -4.8)
-
-                HStack(spacing: 3.2) {
-                    ForEach(0..<3, id: \.self) { _ in
-                        Circle()
-                            .fill(Color(hex: 0x23262A))
-                            .frame(width: 2.6, height: 2.6)
-                    }
-                }
-            }
+        Image(systemName: "ellipsis")
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(RemindersPalette.tertiaryText)
             .frame(width: 28, height: 28)
-            .shadow(color: Color(hex: 0x927553, opacity: isHoverActive ? 0.16 : 0.1), radius: isHoverActive ? 8 : 5, x: 0, y: isHoverActive ? 4 : 2)
-            .scaleEffect(isHoverActive ? 1.03 : 1)
-            .contentShape(Circle())
-        } else {
-            ZStack {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: menuButtonGradientColors,
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .overlay {
-                        Circle()
-                            .stroke(menuButtonBorderColor, lineWidth: 0.9)
-                    }
-                    .overlay(alignment: .topLeading) {
-                        Circle()
-                            .stroke(menuButtonHighlightColor, lineWidth: 0.8)
-                            .padding(1.1)
-                    }
-
-                Circle()
-                    .fill(Color.white.opacity(0.04))
-                    .frame(width: 15, height: 15)
-                    .blur(radius: 0.2)
-                    .offset(x: -0.5, y: -0.5)
-
-                Capsule(style: .continuous)
-                    .fill(menuButtonHighlightColor)
-                    .frame(width: 8, height: 3)
-                    .blur(radius: 0.35)
-                    .offset(x: -2.8, y: -4.8)
-
-                HStack(spacing: 2.5) {
-                    ForEach(0..<3, id: \.self) { _ in
-                        Circle()
-                            .fill(menuButtonIconColor)
-                            .frame(width: 2.6, height: 2.6)
-                    }
-                }
-            }
-            .frame(width: 28, height: 28)
-            .shadow(color: menuButtonShadowColor, radius: isHoverActive ? 8 : 5, x: 0, y: isHoverActive ? 4 : 2)
-            .scaleEffect(isHoverActive ? 1.03 : 1)
-            .contentShape(Circle())
-        }
+            .contentShape(Rectangle())
     }
 
     @ViewBuilder
