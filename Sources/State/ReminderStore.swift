@@ -22,11 +22,22 @@ final class ReminderStore: ObservableObject {
     }
     @Published var draftScheduledAt: Date
     @Published var draftRecurrenceRule: RecurrenceRule?
+    @Published var editingTitle: String = "" {
+        didSet {
+            let limitedTitle = Self.truncatedDraftTitle(editingTitle)
+            guard limitedTitle != editingTitle else { return }
+            editingTitle = limitedTitle
+        }
+    }
+    @Published var editingScheduledAt: Date
+    @Published var editingRecurrenceRule: RecurrenceRule?
     @Published var listScope: ReminderListScope = .dueToday
     @Published private(set) var pendingItems: [ReminderItem] = []
     @Published private(set) var highlightedReminderID: ReminderItem.ID?
     @Published private(set) var isAIParsing: Bool = false
     @Published private(set) var draftValidationMessage: String?
+    @Published private(set) var editingReminderID: ReminderItem.ID?
+    @Published private(set) var editingValidationMessage: String?
 
     private var cancellables: Set<AnyCancellable> = []
     private var reminderTimer: DispatchSourceTimer?
@@ -82,8 +93,15 @@ final class ReminderStore: ObservableObject {
         return pendingItems.first(where: { $0.id == highlightedReminderID })
     }
 
+    var editingReminder: ReminderItem? {
+        guard let editingReminderID else { return nil }
+        return pendingItems.first(where: { $0.id == editingReminderID })
+    }
+
     init() {
-        self.draftScheduledAt = Self.defaultDraftDate()
+        let defaultDate = Self.defaultDraftDate()
+        self.draftScheduledAt = defaultDate
+        self.editingScheduledAt = defaultDate
         setupWindowManagerCallbacks()
         bindPreferences()
         notificationManager.requestAuthorizationIfNeeded()
@@ -100,6 +118,33 @@ final class ReminderStore: ObservableObject {
         guard let reminder = makeDraftReminder() else { return }
         persistReminder(reminder)
         resetDraft()
+    }
+
+    func startEditing(_ item: ReminderItem) {
+        guard !item.isCompleted else { return }
+        editingReminderID = item.id
+        editingTitle = item.title
+        editingScheduledAt = item.scheduledAt
+        editingRecurrenceRule = item.recurrenceRule
+        clearEditingValidationMessage()
+
+        if highlightedReminderID == item.id {
+            highlightedReminderID = nil
+        }
+    }
+
+    func cancelEditing() {
+        resetEditingState()
+    }
+
+    func saveEditingReminder() {
+        clearEditingValidationMessage()
+        guard let currentItem = editingReminder,
+              let updatedItem = makeEditedReminder(from: currentItem)
+        else { return }
+
+        applyUpdatedReminder(updatedItem, resettingPresentationFor: currentItem.id)
+        resetEditingState()
     }
 
     func aiParseAndAdd() {
@@ -153,6 +198,7 @@ final class ReminderStore: ObservableObject {
         if highlightedReminderID == item.id {
             highlightedReminderID = nil
         }
+        reconcileEditingReminder()
 
         pendingItems = Self.sorted(items: pendingItems)
         syncPendingNotifications()
@@ -180,6 +226,7 @@ final class ReminderStore: ObservableObject {
         presentedAdvanceReminderIDs.remove(item.id)
         webhookAttemptedReminderIDs.remove(item.id)
         highlightedReminderID = nil
+        reconcileEditingReminder()
         scheduleNextRecurrence(for: currentItem)
         pendingItems = Self.sorted(items: pendingItems)
         syncPendingNotifications()
@@ -239,6 +286,7 @@ final class ReminderStore: ObservableObject {
         if highlightedReminderID == item.id {
             highlightedReminderID = nil
         }
+        reconcileEditingReminder()
 
         pendingItems = Self.sorted(items: pendingItems)
         syncPendingNotifications()
@@ -258,6 +306,10 @@ final class ReminderStore: ObservableObject {
             highlightedReminderID = nil
         }
 
+        if editingReminderID == item.id {
+            resetEditingState()
+        }
+
         syncPendingNotifications()
         dbDelete(item.id)
         scheduleNextTick()
@@ -274,6 +326,7 @@ final class ReminderStore: ObservableObject {
         presentedAdvanceReminderIDs.subtract(completedIDs)
         webhookAttemptedReminderIDs.subtract(completedIDs)
         reconcileHighlightedReminder()
+        reconcileEditingReminder()
         syncPendingNotifications()
         dbDeleteCompleted()
         scheduleNextTick()
@@ -281,6 +334,10 @@ final class ReminderStore: ObservableObject {
 
     func clearDraftValidationMessage() {
         draftValidationMessage = nil
+    }
+
+    func clearEditingValidationMessage() {
+        editingValidationMessage = nil
     }
 
     func refreshForPanelPresentation() {
@@ -292,6 +349,7 @@ final class ReminderStore: ObservableObject {
         self.pendingItems = Self.sorted(items: items)
         self.syncPendingNotifications()
         self.reconcileHighlightedReminder()
+        self.reconcileEditingReminder()
         self.evaluateReminderPresentation()
     }
 
@@ -557,17 +615,30 @@ final class ReminderStore: ObservableObject {
         }
     }
 
+    private func reconcileEditingReminder() {
+        guard let editingReminderID else { return }
+        guard pendingItems.contains(where: { $0.id == editingReminderID && !$0.isCompleted }) else {
+            resetEditingState()
+            return
+        }
+    }
+
     private func presentDraftValidation(_ message: String) {
         draftValidationMessage = message
+    }
+
+    private func presentEditingValidation(_ message: String) {
+        editingValidationMessage = message
     }
 
     private func validateScheduledAt(
         _ scheduledAt: Date,
         referenceDate: Date = Date(),
-        failureMessage: String
+        failureMessage: String,
+        presentValidation: (String) -> Void
     ) -> Bool {
         guard scheduledAt > referenceDate else {
-            presentDraftValidation(failureMessage)
+            presentValidation(failureMessage)
             return false
         }
 
@@ -575,40 +646,42 @@ final class ReminderStore: ObservableObject {
     }
 
     private func makeDraftReminder(referenceDate: Date = Date()) -> ReminderItem? {
-        let trimmedTitle = draftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedTitle.isEmpty else { return nil }
-        guard trimmedTitle.count <= Self.maxDraftTitleLength else {
-            presentDraftValidation("待办标题最多 100 个字")
-            return nil
-        }
-
-        let resolvedScheduledAt: Date
-        if let rule = draftRecurrenceRule {
-            // 周期性提醒：如果手选时间已过，自动算下一次
-            if draftScheduledAt > referenceDate {
-                resolvedScheduledAt = draftScheduledAt
-            } else if let next = rule.nextOccurrence(after: referenceDate) {
-                resolvedScheduledAt = next
-            } else {
-                presentDraftValidation("无法计算下一次重复时间，请检查规则")
-                return nil
-            }
-        } else {
-            guard validateScheduledAt(
-                draftScheduledAt,
-                referenceDate: referenceDate,
-                failureMessage: "提醒时间必须晚于当前时间"
-            ) else { return nil }
-            resolvedScheduledAt = draftScheduledAt
-        }
+        guard let resolvedDraft = resolveDraftInput(
+            title: draftTitle,
+            scheduledAt: draftScheduledAt,
+            recurrenceRule: draftRecurrenceRule,
+            referenceDate: referenceDate,
+            presentValidation: presentDraftValidation
+        ) else { return nil }
 
         return ReminderItem(
-            title: trimmedTitle,
-            scheduledAt: resolvedScheduledAt,
+            title: resolvedDraft.title,
+            scheduledAt: resolvedDraft.scheduledAt,
             createdAt: referenceDate,
-            tone: Self.tone(for: resolvedScheduledAt, referenceDate: referenceDate),
+            tone: Self.tone(for: resolvedDraft.scheduledAt, referenceDate: referenceDate),
             showsMoreButton: true,
-            recurrenceRule: draftRecurrenceRule
+            recurrenceRule: resolvedDraft.recurrenceRule
+        )
+    }
+
+    private func makeEditedReminder(from item: ReminderItem, referenceDate: Date = Date()) -> ReminderItem? {
+        guard let resolvedDraft = resolveDraftInput(
+            title: editingTitle,
+            scheduledAt: editingScheduledAt,
+            recurrenceRule: editingRecurrenceRule,
+            referenceDate: referenceDate,
+            presentValidation: presentEditingValidation
+        ) else { return nil }
+
+        return makeItem(
+            from: item,
+            title: resolvedDraft.title,
+            scheduledAt: resolvedDraft.scheduledAt,
+            tone: Self.tone(for: resolvedDraft.scheduledAt, referenceDate: referenceDate),
+            isCompleted: false,
+            isHighlighted: false,
+            showsMoreButton: true,
+            recurrenceRule: .some(resolvedDraft.recurrenceRule)
         )
     }
 
@@ -621,11 +694,41 @@ final class ReminderStore: ObservableObject {
         scheduleNextTick()
     }
 
+    private func applyUpdatedReminder(_ item: ReminderItem, resettingPresentationFor reminderID: ReminderItem.ID) {
+        guard let itemIndex = index(for: reminderID) else { return }
+
+        pendingItems[itemIndex] = item
+        presentedReminderIDs.remove(reminderID)
+        presentedAdvanceReminderIDs.remove(reminderID)
+        webhookAttemptedReminderIDs.remove(reminderID)
+
+        if highlightedReminderID == reminderID {
+            highlightedReminderID = nil
+        }
+
+        windowManager.dismissWindow(for: reminderID)
+        notificationManager.cancelNotification(for: reminderID)
+
+        pendingItems = Self.sorted(items: pendingItems)
+        syncPendingNotifications()
+        dbUpdate(item)
+        evaluateReminderPresentation()
+        scheduleNextTick()
+    }
+
     private func resetDraft() {
         draftTitle = ""
         draftScheduledAt = Self.defaultDraftDate()
         draftRecurrenceRule = nil
         clearDraftValidationMessage()
+    }
+
+    private func resetEditingState() {
+        editingReminderID = nil
+        editingTitle = ""
+        editingScheduledAt = Self.defaultDraftDate()
+        editingRecurrenceRule = nil
+        clearEditingValidationMessage()
     }
 
     private func applyAIParseResult(_ result: AIParseResult) {
@@ -636,7 +739,8 @@ final class ReminderStore: ObservableObject {
         if result.recurrenceRule == nil {
             guard validateScheduledAt(
                 result.scheduledAt,
-                failureMessage: "AI 解析出的提醒时间必须晚于当前时间，请修改描述后重试"
+                failureMessage: "AI 解析出的提醒时间必须晚于当前时间，请修改描述后重试",
+                presentValidation: presentDraftValidation
             ) else { return }
         }
 
@@ -645,6 +749,12 @@ final class ReminderStore: ObservableObject {
 }
 
 private extension ReminderStore {
+    struct ResolvedDraftInput {
+        let title: String
+        let scheduledAt: Date
+        let recurrenceRule: RecurrenceRule?
+    }
+
     static func defaultDraftDate(from date: Date = Date()) -> Date {
         let interval: TimeInterval = 5 * 60
         let nextTime = ceil(date.timeIntervalSince1970 / interval) * interval
@@ -670,6 +780,47 @@ private extension ReminderStore {
 
     static func truncatedDraftTitle(_ title: String) -> String {
         String(title.prefix(maxDraftTitleLength))
+    }
+
+    func resolveDraftInput(
+        title: String,
+        scheduledAt: Date,
+        recurrenceRule: RecurrenceRule?,
+        referenceDate: Date,
+        presentValidation: (String) -> Void
+    ) -> ResolvedDraftInput? {
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTitle.isEmpty else { return nil }
+        guard trimmedTitle.count <= Self.maxDraftTitleLength else {
+            presentValidation("待办标题最多 100 个字")
+            return nil
+        }
+
+        let resolvedScheduledAt: Date
+        if let recurrenceRule {
+            if scheduledAt > referenceDate {
+                resolvedScheduledAt = scheduledAt
+            } else if let next = recurrenceRule.nextOccurrence(after: referenceDate) {
+                resolvedScheduledAt = next
+            } else {
+                presentValidation("无法计算下一次重复时间，请检查规则")
+                return nil
+            }
+        } else {
+            guard validateScheduledAt(
+                scheduledAt,
+                referenceDate: referenceDate,
+                failureMessage: "提醒时间必须晚于当前时间",
+                presentValidation: presentValidation
+            ) else { return nil }
+            resolvedScheduledAt = scheduledAt
+        }
+
+        return ResolvedDraftInput(
+            title: trimmedTitle,
+            scheduledAt: resolvedScheduledAt,
+            recurrenceRule: recurrenceRule
+        )
     }
 
     func index(for id: ReminderItem.ID) -> Int? {

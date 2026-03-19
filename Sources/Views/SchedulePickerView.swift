@@ -1,31 +1,113 @@
 import SwiftUI
 
-private enum SchedulePickerLayout {
-    static let expandedWidth: CGFloat = 266
-    static let recurringWidth: CGFloat = 220
-    static let outerSpacing: CGFloat = 5
-    static let outerPadding: CGFloat = 5
-    static let sectionSpacing: CGFloat = 5
-    static let sectionPadding: CGFloat = 6
-    static let weekdaySpacing: CGFloat = 2
-    static let dayCellHeight: CGFloat = 21
-    static let navButtonSize: CGFloat = 18
-    static let timeRowSpacing: CGFloat = 4
-    static let timeChipHeight: CGFloat = 34
-    static let stepperButtonWidth: CGFloat = 12
-    static let stepperButtonHeight: CGFloat = 10
-    static let timeIconSize: CGFloat = 14
+enum SchedulePickerSizeVariant {
+    case regular
+    case compact
+
+    var metrics: SchedulePickerMetrics {
+        switch self {
+        case .regular:
+            return SchedulePickerMetrics(
+                expandedWidth: 266,
+                recurringWidth: 220,
+                outerSpacing: 5,
+                outerPadding: 5,
+                outerCornerRadius: 16,
+                sectionSpacing: 5,
+                sectionPadding: 6,
+                sectionCornerRadius: 14,
+                weekdaySpacing: 2,
+                monthFontSize: 14,
+                weekdayFontSize: 9,
+                dayFontSize: 11,
+                dayCellHeight: 21,
+                dayCellCornerRadius: 8,
+                navButtonSize: 18,
+                navIconSize: 10,
+                timeRowSpacing: 4,
+                timeFontSize: 13,
+                timeChipHeight: 34,
+                timeChipCornerRadius: 11,
+                stepperButtonWidth: 12,
+                stepperButtonHeight: 10,
+                stepperIconSize: 7,
+                stepperCornerRadius: 7,
+                timeIconSize: 14,
+                confirmFontSize: 10
+            )
+        case .compact:
+            return SchedulePickerMetrics(
+                expandedWidth: 236,
+                recurringWidth: 196,
+                outerSpacing: 4,
+                outerPadding: 4,
+                outerCornerRadius: 14,
+                sectionSpacing: 4,
+                sectionPadding: 5,
+                sectionCornerRadius: 12,
+                weekdaySpacing: 1.5,
+                monthFontSize: 13,
+                weekdayFontSize: 8,
+                dayFontSize: 10,
+                dayCellHeight: 18,
+                dayCellCornerRadius: 7,
+                navButtonSize: 16,
+                navIconSize: 9,
+                timeRowSpacing: 3,
+                timeFontSize: 12,
+                timeChipHeight: 30,
+                timeChipCornerRadius: 10,
+                stepperButtonWidth: 10,
+                stepperButtonHeight: 8,
+                stepperIconSize: 6,
+                stepperCornerRadius: 6,
+                timeIconSize: 12,
+                confirmFontSize: 9
+            )
+        }
+    }
+}
+
+struct SchedulePickerMetrics {
+    let expandedWidth: CGFloat
+    let recurringWidth: CGFloat
+    let outerSpacing: CGFloat
+    let outerPadding: CGFloat
+    let outerCornerRadius: CGFloat
+    let sectionSpacing: CGFloat
+    let sectionPadding: CGFloat
+    let sectionCornerRadius: CGFloat
+    let weekdaySpacing: CGFloat
+    let monthFontSize: CGFloat
+    let weekdayFontSize: CGFloat
+    let dayFontSize: CGFloat
+    let dayCellHeight: CGFloat
+    let dayCellCornerRadius: CGFloat
+    let navButtonSize: CGFloat
+    let navIconSize: CGFloat
+    let timeRowSpacing: CGFloat
+    let timeFontSize: CGFloat
+    let timeChipHeight: CGFloat
+    let timeChipCornerRadius: CGFloat
+    let stepperButtonWidth: CGFloat
+    let stepperButtonHeight: CGFloat
+    let stepperIconSize: CGFloat
+    let stepperCornerRadius: CGFloat
+    let timeIconSize: CGFloat
+    let confirmFontSize: CGFloat
 }
 
 struct ScheduleDateTimePickerView: View {
     @Binding var selection: Date
     let minimumDate: Date
     let isRecurringMode: Bool
+    let sizeVariant: SchedulePickerSizeVariant
     let onConfirm: () -> Void
 
     @State private var displayedMonth: Date
     @ObservedObject private var themeManager = ThemeManager.shared
 
+    private var metrics: SchedulePickerMetrics { sizeVariant.metrics }
     private var calendar: Calendar { Calendar.autoupdatingCurrent }
     private var appearance: SchedulePickerAppearance { SchedulePickerAppearance(isCandyTheme: themeManager.isCandyTheme) }
     private var monthTitle: String { SchedulePickerFormatters.month.string(from: displayedMonth) }
@@ -34,29 +116,32 @@ struct ScheduleDateTimePickerView: View {
     private var monthDays: [ScheduleDay] { makeMonthDays() }
     private var canGoToPreviousMonth: Bool { canNavigateBackFromCurrentMonth() }
     private var pickerWidth: CGFloat {
-        isRecurringMode ? SchedulePickerLayout.recurringWidth : SchedulePickerLayout.expandedWidth
+        isRecurringMode ? metrics.recurringWidth : metrics.expandedWidth
     }
 
     init(
         selection: Binding<Date>,
         minimumDate: Date,
         isRecurringMode: Bool,
+        sizeVariant: SchedulePickerSizeVariant = .regular,
         onConfirm: @escaping () -> Void
     ) {
         self._selection = selection
         self.minimumDate = minimumDate
         self.isRecurringMode = isRecurringMode
+        self.sizeVariant = sizeVariant
         self.onConfirm = onConfirm
         _displayedMonth = State(initialValue: Self.startOfMonth(for: selection.wrappedValue))
     }
 
     var body: some View {
-        VStack(spacing: SchedulePickerLayout.outerSpacing) {
+        VStack(spacing: metrics.outerSpacing) {
             if !isRecurringMode {
                 ScheduleCalendarSectionView(
                     monthTitle: monthTitle,
                     weekdaySymbols: weekdaySymbols,
                     days: monthDays,
+                    metrics: metrics,
                     appearance: appearance,
                     selectedDate: selection,
                     canGoToPreviousMonth: canGoToPreviousMonth,
@@ -68,19 +153,20 @@ struct ScheduleDateTimePickerView: View {
 
             ScheduleTimeControlRow(
                 timeText: timeText,
+                metrics: metrics,
                 appearance: appearance,
                 onIncrementMinute: { adjustTime(by: 1) },
                 onDecrementMinute: { adjustTime(by: -1) },
                 onConfirm: onConfirm
             )
         }
-        .padding(SchedulePickerLayout.outerPadding)
+        .padding(metrics.outerPadding)
         .background(
             appearance.outerSurface,
-            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+            in: RoundedRectangle(cornerRadius: metrics.outerCornerRadius, style: .continuous)
         )
         .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: metrics.outerCornerRadius, style: .continuous)
                 .stroke(appearance.border, lineWidth: 0.8)
         }
         .shadow(color: appearance.shadow, radius: 12, x: 0, y: 5)
@@ -199,6 +285,7 @@ private struct ScheduleCalendarSectionView: View {
     let monthTitle: String
     let weekdaySymbols: [String]
     let days: [ScheduleDay]
+    let metrics: SchedulePickerMetrics
     let appearance: SchedulePickerAppearance
     let selectedDate: Date
     let canGoToPreviousMonth: Bool
@@ -209,10 +296,10 @@ private struct ScheduleCalendarSectionView: View {
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 0), count: 7)
 
     var body: some View {
-        VStack(spacing: SchedulePickerLayout.sectionSpacing) {
-            HStack(spacing: SchedulePickerLayout.sectionSpacing) {
+        VStack(spacing: metrics.sectionSpacing) {
+            HStack(spacing: metrics.sectionSpacing) {
                 Text(monthTitle)
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .font(.system(size: metrics.monthFontSize, weight: .bold, design: .rounded))
                     .foregroundStyle(appearance.monthText)
 
                 Spacer()
@@ -220,6 +307,7 @@ private struct ScheduleCalendarSectionView: View {
                 HStack(spacing: 5) {
                     CalendarNavButton(
                         systemName: "chevron.left",
+                        metrics: metrics,
                         appearance: appearance,
                         isEnabled: canGoToPreviousMonth,
                         action: onPreviousMonth
@@ -227,6 +315,7 @@ private struct ScheduleCalendarSectionView: View {
 
                     CalendarNavButton(
                         systemName: "chevron.right",
+                        metrics: metrics,
                         appearance: appearance,
                         isEnabled: true,
                         action: onNextMonth
@@ -234,20 +323,21 @@ private struct ScheduleCalendarSectionView: View {
                 }
             }
 
-            LazyVGrid(columns: columns, spacing: SchedulePickerLayout.weekdaySpacing) {
+            LazyVGrid(columns: columns, spacing: metrics.weekdaySpacing) {
                 ForEach(weekdaySymbols, id: \.self) { symbol in
                     Text(symbol)
-                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                        .font(.system(size: metrics.weekdayFontSize, weight: .bold, design: .rounded))
                         .foregroundStyle(appearance.weekdayText)
                         .frame(maxWidth: .infinity)
                 }
             }
             .padding(.bottom, 2)
 
-            LazyVGrid(columns: columns, spacing: SchedulePickerLayout.weekdaySpacing) {
+            LazyVGrid(columns: columns, spacing: metrics.weekdaySpacing) {
                 ForEach(days) { day in
                     CalendarDayCellView(
                         day: day,
+                        metrics: metrics,
                         appearance: appearance,
                         isSelected: Calendar.autoupdatingCurrent.isDate(day.date, inSameDayAs: selectedDate),
                         isToday: Calendar.autoupdatingCurrent.isDateInToday(day.date),
@@ -256,13 +346,13 @@ private struct ScheduleCalendarSectionView: View {
                 }
             }
         }
-        .padding(SchedulePickerLayout.sectionPadding)
+        .padding(metrics.sectionPadding)
         .background(
             appearance.calendarSurface,
-            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+            in: RoundedRectangle(cornerRadius: metrics.sectionCornerRadius, style: .continuous)
         )
         .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: metrics.sectionCornerRadius, style: .continuous)
                 .stroke(appearance.border, lineWidth: 0.7)
         }
     }
@@ -270,6 +360,7 @@ private struct ScheduleCalendarSectionView: View {
 
 private struct CalendarNavButton: View {
     let systemName: String
+    let metrics: SchedulePickerMetrics
     let appearance: SchedulePickerAppearance
     let isEnabled: Bool
     let action: () -> Void
@@ -277,11 +368,11 @@ private struct CalendarNavButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: 10, weight: .bold))
+                .font(.system(size: metrics.navIconSize, weight: .bold))
                 .foregroundStyle(appearance.navText.opacity(isEnabled ? 1 : 0.35))
                 .frame(
-                    width: SchedulePickerLayout.navButtonSize,
-                    height: SchedulePickerLayout.navButtonSize
+                    width: metrics.navButtonSize,
+                    height: metrics.navButtonSize
                 )
                 .background(
                     appearance.navSurface.opacity(isEnabled ? 1 : 0.5),
@@ -300,6 +391,7 @@ private struct CalendarNavButton: View {
 
 private struct CalendarDayCellView: View {
     let day: ScheduleDay
+    let metrics: SchedulePickerMetrics
     let appearance: SchedulePickerAppearance
     let isSelected: Bool
     let isToday: Bool
@@ -309,22 +401,22 @@ private struct CalendarDayCellView: View {
         Button(action: { onSelect(day.date) }) {
             ZStack {
                 if isSelected {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    RoundedRectangle(cornerRadius: metrics.dayCellCornerRadius, style: .continuous)
                         .fill(appearance.selectedDayFill)
                         .shadow(color: appearance.shadow.opacity(0.3), radius: 3, x: 0, y: 1)
                 } else if isToday {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    RoundedRectangle(cornerRadius: metrics.dayCellCornerRadius, style: .continuous)
                         .stroke(appearance.todayRing, lineWidth: 1)
                 }
 
                 Text("\(Calendar.autoupdatingCurrent.component(.day, from: day.date))")
-                    .font(.system(size: 11, weight: isSelected ? .bold : .semibold, design: .rounded))
+                    .font(.system(size: metrics.dayFontSize, weight: isSelected ? .bold : .semibold, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(dayForeground)
             }
             .frame(maxWidth: .infinity)
-            .frame(height: SchedulePickerLayout.dayCellHeight)
-            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .frame(height: metrics.dayCellHeight)
+            .contentShape(RoundedRectangle(cornerRadius: metrics.dayCellCornerRadius, style: .continuous))
         }
         .buttonStyle(.plain)
         .disabled(!day.isSelectable)
@@ -360,36 +452,39 @@ private struct CalendarDayCellView: View {
 
 private struct ScheduleTimeControlRow: View {
     let timeText: String
+    let metrics: SchedulePickerMetrics
     let appearance: SchedulePickerAppearance
     let onIncrementMinute: () -> Void
     let onDecrementMinute: () -> Void
     let onConfirm: () -> Void
 
     var body: some View {
-        HStack(spacing: SchedulePickerLayout.timeRowSpacing) {
+        HStack(spacing: metrics.timeRowSpacing) {
             Image(systemName: "clock")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(appearance.weekdayText)
                 .frame(
-                    width: SchedulePickerLayout.timeIconSize,
-                    height: SchedulePickerLayout.timeIconSize
+                    width: metrics.timeIconSize,
+                    height: metrics.timeIconSize
                 )
 
             HStack(spacing: 5) {
                 Text(timeText)
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .font(.system(size: metrics.timeFontSize, weight: .bold, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(appearance.timeChipText)
 
                 VStack(spacing: 2) {
                     StepperChevronButton(
                         systemName: "chevron.up",
+                        metrics: metrics,
                         appearance: appearance,
                         action: onIncrementMinute
                     )
 
                     StepperChevronButton(
                         systemName: "chevron.down",
+                        metrics: metrics,
                         appearance: appearance,
                         action: onDecrementMinute
                     )
@@ -398,17 +493,17 @@ private struct ScheduleTimeControlRow: View {
                 .padding(.horizontal, 2)
                 .background(
                     appearance.stepperSurface,
-                    in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    in: RoundedRectangle(cornerRadius: metrics.stepperCornerRadius, style: .continuous)
                 )
             }
             .padding(.horizontal, 8)
-            .frame(height: SchedulePickerLayout.timeChipHeight)
+            .frame(height: metrics.timeChipHeight)
             .background(
                 appearance.timeChipFill,
-                in: RoundedRectangle(cornerRadius: 11, style: .continuous)
+                in: RoundedRectangle(cornerRadius: metrics.timeChipCornerRadius, style: .continuous)
             )
             .overlay {
-                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                RoundedRectangle(cornerRadius: metrics.timeChipCornerRadius, style: .continuous)
                     .stroke(appearance.border.opacity(0.35), lineWidth: 0.8)
             }
 
@@ -416,7 +511,7 @@ private struct ScheduleTimeControlRow: View {
 
             Button(action: onConfirm) {
                 Text("确定")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: metrics.confirmFontSize, weight: .semibold))
                     .foregroundStyle(appearance.confirmText)
                     .padding(.vertical, 5)
                     .padding(.horizontal, 2)
@@ -430,17 +525,18 @@ private struct ScheduleTimeControlRow: View {
 
 private struct StepperChevronButton: View {
     let systemName: String
+    let metrics: SchedulePickerMetrics
     let appearance: SchedulePickerAppearance
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: 7, weight: .bold))
+                .font(.system(size: metrics.stepperIconSize, weight: .bold))
                 .foregroundStyle(appearance.stepperText)
                 .frame(
-                    width: SchedulePickerLayout.stepperButtonWidth,
-                    height: SchedulePickerLayout.stepperButtonHeight
+                    width: metrics.stepperButtonWidth,
+                    height: metrics.stepperButtonHeight
                 )
         }
         .buttonStyle(.plain)

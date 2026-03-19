@@ -191,10 +191,7 @@ struct AddReminderBarView: View {
         static let bottomPadding: CGFloat = 4
     }
 
-    @State private var isCalendarExpanded = false
-    @State private var cronInput: String = ""
     @ObservedObject private var themeManager = ThemeManager.shared
-    private let schedulePickerOffsetY: CGFloat = 46
 
     private var isCandy: Bool { themeManager.isCandyTheme }
 
@@ -202,27 +199,133 @@ struct AddReminderBarView: View {
         !draftTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private var minimumSelectableDate: Date {
+        ReminderComposerFieldsView<EmptyView>.minimumSelectableDate(from: Date())
+    }
+
+    var body: some View {
+        ReminderComposerFieldsView(
+            title: $draftTitle,
+            scheduledAt: $draftScheduledAt,
+            recurrenceRule: $draftRecurrenceRule,
+            validationMessage: validationMessage,
+            titlePlaceholder: "添加新待办...",
+            minimumSelectableDate: minimumSelectableDate,
+            contentPadding: EdgeInsets(
+                top: Layout.topPadding,
+                leading: Layout.horizontalPadding,
+                bottom: Layout.bottomPadding,
+                trailing: Layout.horizontalPadding
+            ),
+            schedulePickerDisplayMode: .floating,
+            schedulePickerSizeVariant: .regular,
+            onSubmit: onAdd,
+            onDismissValidationMessage: onDismissValidationMessage
+        ) {
+            Button(action: onAIParse) {
+                Group {
+                    if isAIParsing {
+                        ProgressView()
+                            .tint(RemindersPalette.primaryText)
+                            .scaleEffect(0.65)
+                            .frame(width: 14, height: 14)
+                    } else {
+                        Image(systemName: "wand.and.stars")
+                            .font(.system(size: 15, weight: .semibold))
+                    }
+                }
+                .foregroundStyle(RemindersPalette.primaryText)
+                .frame(width: 42, height: 42)
+                .background {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: isCandy
+                                    ? [RemindersPalette.accentBlue, Color(hex: 0x4B6F95)]
+                                    : [Color(hex: 0x7B5EF0), Color(hex: 0x5B8DEF)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .opacity(canSubmit && !isAIParsing ? 1 : 0.62)
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(!canSubmit || isAIParsing)
+            .help("AI 智能解析")
+
+            Button(action: onAdd) {
+                Image(systemName: "plus")
+                    .font(.system(size: 17, weight: .heavy))
+                    .foregroundStyle(RemindersPalette.primaryText)
+                    .frame(width: 42, height: 42)
+                    .background {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(
+                                isCandy
+                                    ? AnyShapeStyle(LinearGradient(colors: [RemindersPalette.accentGreen, Color(hex: 0x4E725F)], startPoint: .top, endPoint: .bottom))
+                                    : AnyShapeStyle(RemindersPalette.accentBlue)
+                            )
+                            .opacity(canSubmit ? 1 : 0.62)
+                    }
+            }
+            .buttonStyle(.plain)
+            .disabled(!canSubmit)
+        }
+    }
+}
+
+private enum ReminderComposerLayout {
+    static let verticalSpacing: CGFloat = 8
+    static let titleFieldHeight: CGFloat = 42
+    static let titleCornerRadius: CGFloat = 14
+    static let scheduleFieldHeight: CGFloat = 38
+    static let scheduleCornerRadius: CGFloat = 12
+    static let schedulePickerOffsetY: CGFloat = 46
+}
+
+private enum ReminderComposerPickerDisplayMode {
+    case floating
+    case inline
+}
+
+private struct ReminderComposerFieldsView<TrailingActions: View>: View {
+
+    @Binding var title: String
+    @Binding var scheduledAt: Date
+    @Binding var recurrenceRule: RecurrenceRule?
+    let validationMessage: String?
+    let titlePlaceholder: String
+    let minimumSelectableDate: Date
+    let contentPadding: EdgeInsets
+    let schedulePickerDisplayMode: ReminderComposerPickerDisplayMode
+    let schedulePickerSizeVariant: SchedulePickerSizeVariant
+    let onSubmit: () -> Void
+    let onDismissValidationMessage: () -> Void
+    @ViewBuilder let trailingActions: () -> TrailingActions
+
+    @State private var isCalendarExpanded = false
+    @State private var cronInput: String = ""
+    @ObservedObject private var themeManager = ThemeManager.shared
+
+    private var isCandy: Bool { themeManager.isCandyTheme }
+
     private var isCronMode: Bool {
-        if case .cron = draftRecurrenceRule { return true }
+        if case .cron = recurrenceRule { return true }
         return false
     }
 
     private var isRecurringMode: Bool {
-        draftRecurrenceRule != nil
-    }
-
-    private var minimumSelectableDate: Date {
-        Self.minimumSelectableDate(from: Date())
+        recurrenceRule != nil
     }
 
     private var scheduleLabel: String {
-        if let rule = draftRecurrenceRule {
-            switch rule {
+        if let recurrenceRule {
+            switch recurrenceRule {
             case .daily(let hour, let minute):
                 return "每天 \(String(format: "%02d:%02d", hour, minute))"
             case .weekly(let weekday, let hour, let minute):
-                let name = weekdayShortName(weekday)
-                return "每\(name) \(String(format: "%02d:%02d", hour, minute))"
+                return "每\(weekdayShortName(weekday)) \(String(format: "%02d:%02d", hour, minute))"
             case .cron:
                 return ""
             }
@@ -232,14 +335,212 @@ struct AddReminderBarView: View {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
 
-        if calendar.isDateInToday(draftScheduledAt) {
+        if calendar.isDateInToday(scheduledAt) {
             formatter.dateFormat = "今天 HH:mm"
-        } else if calendar.isDateInTomorrow(draftScheduledAt) {
+        } else if calendar.isDateInTomorrow(scheduledAt) {
             formatter.dateFormat = "明天 HH:mm"
         } else {
             formatter.dateFormat = "M月d日 HH:mm"
         }
-        return formatter.string(from: draftScheduledAt)
+
+        return formatter.string(from: scheduledAt)
+    }
+
+    var body: some View {
+        VStack(spacing: ReminderComposerLayout.verticalSpacing) {
+            HStack(spacing: 8) {
+                titleField
+                trailingActions()
+            }
+
+            if !isCronMode {
+                scheduleField
+
+                if isCalendarExpanded && schedulePickerDisplayMode == .inline {
+                    schedulePicker
+                }
+            }
+
+            RecurrenceRulePicker(
+                rule: $recurrenceRule,
+                scheduledAt: scheduledAt,
+                cronInput: $cronInput
+            )
+            .allowsHitTesting(!isCalendarExpanded)
+            .opacity(isCalendarExpanded ? 0.3 : 1)
+
+            if let validationMessage {
+                validationBanner(message: validationMessage)
+            }
+        }
+        .padding(contentPadding)
+        .onAppear {
+            syncCronInput(from: recurrenceRule)
+        }
+        .onChange(of: title) { _, _ in
+            guard validationMessage != nil else { return }
+            onDismissValidationMessage()
+        }
+        .onChange(of: scheduledAt) { _, newValue in
+            if validationMessage != nil {
+                onDismissValidationMessage()
+            }
+            syncRecurrenceTime(from: newValue)
+        }
+        .onChange(of: recurrenceRule) { _, newValue in
+            syncCronInput(from: newValue)
+            if validationMessage != nil {
+                onDismissValidationMessage()
+            }
+        }
+    }
+
+    private var titleField: some View {
+        ZStack(alignment: .leading) {
+            if title.isEmpty {
+                Text(titlePlaceholder)
+                    .font(.system(size: 13, weight: .semibold, design: isCandy ? .rounded : .default))
+                    .foregroundStyle(RemindersPalette.primaryText.opacity(0.56))
+                    .padding(.horizontal, 12)
+                    .allowsHitTesting(false)
+            }
+
+            TextField("", text: $title)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13, weight: .semibold, design: isCandy ? .rounded : .default))
+                .foregroundStyle(RemindersPalette.primaryText)
+                .onSubmit(onSubmit)
+                .padding(.horizontal, 12)
+                .frame(height: ReminderComposerLayout.titleFieldHeight)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, minHeight: ReminderComposerLayout.titleFieldHeight, alignment: .leading)
+        .background(
+            isCandy ? RemindersPalette.candyFieldBlue : RemindersPalette.field,
+            in: RoundedRectangle(cornerRadius: ReminderComposerLayout.titleCornerRadius, style: .continuous)
+        )
+        .overlay {
+            if isCandy {
+                RoundedRectangle(cornerRadius: ReminderComposerLayout.titleCornerRadius, style: .continuous)
+                    .stroke(RemindersPalette.accentBlue.opacity(0.32), lineWidth: 1)
+            }
+        }
+        .shadow(color: RemindersPalette.shadow.opacity(isCandy ? 0.18 : 0.06), radius: 8, x: 0, y: 2)
+    }
+
+    private var scheduleField: some View {
+        Button(action: toggleCalendar) {
+            HStack(spacing: 6) {
+                Image(systemName: "calendar")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(RemindersPalette.accentBlue)
+
+                Text(scheduleLabel)
+                    .font(.system(size: 12, weight: .semibold, design: isCandy ? .rounded : .default))
+                    .foregroundStyle(RemindersPalette.primaryText)
+
+                Spacer()
+
+                Image(systemName: isCalendarExpanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(isCandy ? RemindersPalette.accentOrange : RemindersPalette.tertiaryText)
+            }
+            .padding(.horizontal, 12)
+            .frame(height: ReminderComposerLayout.scheduleFieldHeight)
+            .background(
+                isCandy ? RemindersPalette.candyCardYellow : RemindersPalette.field,
+                in: RoundedRectangle(cornerRadius: ReminderComposerLayout.scheduleCornerRadius, style: .continuous)
+            )
+            .overlay {
+                if isCandy {
+                    RoundedRectangle(cornerRadius: ReminderComposerLayout.scheduleCornerRadius, style: .continuous)
+                        .stroke(RemindersPalette.accentBlue.opacity(0.18), lineWidth: 1)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .overlay(alignment: .topLeading) {
+            if isCalendarExpanded && schedulePickerDisplayMode == .floating {
+                schedulePicker
+                    .offset(y: ReminderComposerLayout.schedulePickerOffsetY)
+                    .transition(.opacity)
+                    .zIndex(20)
+            }
+        }
+        .zIndex(isCalendarExpanded && schedulePickerDisplayMode == .floating ? 20 : 0)
+    }
+
+    private var schedulePicker: some View {
+        ScheduleDateTimePickerView(
+            selection: $scheduledAt,
+            minimumDate: minimumSelectableDate,
+            isRecurringMode: isRecurringMode,
+            sizeVariant: schedulePickerSizeVariant,
+            onConfirm: closeCalendar
+        )
+    }
+
+    private func validationBanner(message: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 11, weight: .semibold))
+
+            Text(message)
+                .font(.system(size: 11, weight: .medium))
+
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(RemindersPalette.accentRed)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(RemindersPalette.validationBg, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(RemindersPalette.accentRed.opacity(0.28), lineWidth: 0.8)
+        }
+        .transition(.opacity)
+    }
+
+    private func toggleCalendar() {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            isCalendarExpanded.toggle()
+        }
+    }
+
+    private func closeCalendar() {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            isCalendarExpanded = false
+        }
+    }
+
+    private func syncRecurrenceTime(from date: Date) {
+        guard let recurrenceRule else { return }
+        let calendar = Calendar.autoupdatingCurrent
+        let components = calendar.dateComponents([.hour, .minute], from: date)
+        let hour = components.hour ?? 9
+        let minute = components.minute ?? 0
+
+        switch recurrenceRule {
+        case .daily:
+            self.recurrenceRule = .daily(hour: hour, minute: minute)
+        case .weekly(let weekday, _, _):
+            self.recurrenceRule = .weekly(weekday: weekday, hour: hour, minute: minute)
+        case .cron:
+            break
+        }
+    }
+
+    private func syncCronInput(from recurrenceRule: RecurrenceRule?) {
+        guard case .cron(let expression) = recurrenceRule else {
+            if cronInput.isEmpty == false {
+                cronInput = ""
+            }
+            return
+        }
+
+        guard cronInput != expression else { return }
+        cronInput = expression
     }
 
     private func weekdayShortName(_ weekday: Int) -> String {
@@ -255,209 +556,162 @@ struct AddReminderBarView: View {
         }
     }
 
-    var body: some View {
-        VStack(spacing: Layout.verticalSpacing) {
-            HStack(spacing: 8) {
-                ZStack(alignment: .leading) {
-                    if draftTitle.isEmpty {
-                        Text("添加新待办...")
-                            .font(.system(size: 13, weight: .semibold, design: isCandy ? .rounded : .default))
-                            .foregroundStyle(RemindersPalette.primaryText.opacity(0.56))
-                            .padding(.horizontal, 12)
-                            .allowsHitTesting(false)
-                    }
-
-                    TextField("", text: $draftTitle)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 13, weight: .semibold, design: isCandy ? .rounded : .default))
-                        .foregroundStyle(RemindersPalette.primaryText)
-                        .onSubmit(onAdd)
-                        .padding(.horizontal, 12)
-                        .frame(height: 42)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
-                .background(
-                    isCandy ? RemindersPalette.candyFieldBlue : RemindersPalette.field,
-                    in: RoundedRectangle(cornerRadius: 14, style: .continuous)
-                )
-                .overlay {
-                    if isCandy {
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(RemindersPalette.accentBlue.opacity(0.32), lineWidth: 1)
-                    }
-                }
-                .shadow(color: RemindersPalette.shadow.opacity(isCandy ? 0.18 : 0.06), radius: 8, x: 0, y: 2)
-
-                Button(action: onAIParse) {
-                    Group {
-                        if isAIParsing {
-                            ProgressView()
-                                .tint(RemindersPalette.primaryText)
-                                .scaleEffect(0.65)
-                                .frame(width: 14, height: 14)
-                        } else {
-                            Image(systemName: "wand.and.stars")
-                                .font(.system(size: 15, weight: .semibold))
-                        }
-                    }
-                    .foregroundStyle(RemindersPalette.primaryText)
-                    .frame(width: 42, height: 42)
-                    .background {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(
-                                LinearGradient(
-                                    colors: isCandy
-                                        ? [RemindersPalette.accentBlue, Color(hex: 0x4B6F95)]
-                                        : [Color(hex: 0x7B5EF0), Color(hex: 0x5B8DEF)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                            .opacity(canSubmit && !isAIParsing ? 1 : 0.62)
-                    }
-                }
-                .buttonStyle(.plain)
-                .disabled(!canSubmit || isAIParsing)
-                .help("AI 智能解析")
-
-                Button(action: onAdd) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 17, weight: .heavy))
-                        .foregroundStyle(RemindersPalette.primaryText)
-                        .frame(width: 42, height: 42)
-                        .background {
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(
-                                    isCandy
-                                        ? AnyShapeStyle(LinearGradient(colors: [RemindersPalette.accentGreen, Color(hex: 0x4E725F)], startPoint: .top, endPoint: .bottom))
-                                        : AnyShapeStyle(RemindersPalette.accentBlue)
-                                )
-                                .opacity(canSubmit ? 1 : 0.62)
-                        }
-                }
-                .buttonStyle(.plain)
-                .disabled(!canSubmit)
-            }
-
-            if !isCronMode {
-                Button(action: {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        isCalendarExpanded.toggle()
-                    }
-                }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "calendar")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(RemindersPalette.accentBlue)
-                        Text(scheduleLabel)
-                            .font(.system(size: 12, weight: .semibold, design: isCandy ? .rounded : .default))
-                            .foregroundStyle(RemindersPalette.primaryText)
-                        Spacer()
-                        Image(systemName: isCalendarExpanded ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundStyle(isCandy ? RemindersPalette.accentOrange : RemindersPalette.tertiaryText)
-                    }
-                    .padding(.horizontal, 12)
-                    .frame(height: 38)
-                    .background(
-                        isCandy ? RemindersPalette.candyCardYellow : RemindersPalette.field,
-                        in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    )
-                    .overlay {
-                        if isCandy {
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .stroke(RemindersPalette.accentBlue.opacity(0.18), lineWidth: 1)
-                        }
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .overlay(alignment: .topLeading) {
-                    if isCalendarExpanded {
-                        ScheduleDateTimePickerView(
-                            selection: $draftScheduledAt,
-                            minimumDate: minimumSelectableDate,
-                            isRecurringMode: isRecurringMode,
-                            onConfirm: {
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    isCalendarExpanded = false
-                                }
-                            }
-                        )
-                        .offset(y: schedulePickerOffsetY)
-                        .transition(.opacity)
-                        .zIndex(20)
-                    }
-                }
-                .zIndex(isCalendarExpanded ? 20 : 0)
-            }
-
-            RecurrenceRulePicker(
-                rule: $draftRecurrenceRule,
-                scheduledAt: draftScheduledAt,
-                cronInput: $cronInput
-            )
-            .allowsHitTesting(!isCalendarExpanded)
-            .opacity(isCalendarExpanded ? 0.3 : 1)
-
-            if let validationMessage {
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 11, weight: .semibold))
-
-                    Text(validationMessage)
-                        .font(.system(size: 11, weight: .medium))
-
-                    Spacer(minLength: 0)
-                }
-                .foregroundStyle(RemindersPalette.accentRed)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .background(RemindersPalette.validationBg, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(RemindersPalette.accentRed.opacity(0.28), lineWidth: 0.8)
-                }
-                .transition(.opacity)
-            }
-        }
-        .padding(.horizontal, Layout.horizontalPadding)
-        .padding(.top, Layout.topPadding)
-        .padding(.bottom, Layout.bottomPadding)
-        .onChange(of: draftTitle) { _, _ in
-            guard validationMessage != nil else { return }
-            onDismissValidationMessage()
-        }
-        .onChange(of: draftScheduledAt) { _, newValue in
-            if validationMessage != nil {
-                onDismissValidationMessage()
-            }
-            syncRecurrenceTime(from: newValue)
-        }
-    }
-
-    private func syncRecurrenceTime(from date: Date) {
-        guard let rule = draftRecurrenceRule else { return }
-        let calendar = Calendar.autoupdatingCurrent
-        let comps = calendar.dateComponents([.hour, .minute], from: date)
-        let hour = comps.hour ?? 9
-        let minute = comps.minute ?? 0
-
-        switch rule {
-        case .daily:
-            draftRecurrenceRule = .daily(hour: hour, minute: minute)
-        case .weekly(let weekday, _, _):
-            draftRecurrenceRule = .weekly(weekday: weekday, hour: hour, minute: minute)
-        case .cron:
-            break
-        }
-    }
-
-    private static func minimumSelectableDate(from date: Date) -> Date {
+    static func minimumSelectableDate(from date: Date) -> Date {
         let calendar = Calendar.autoupdatingCurrent
         let currentMinuteStart = calendar.dateInterval(of: .minute, for: date)?.start ?? date
         return calendar.date(byAdding: .minute, value: 1, to: currentMinuteStart) ?? date.addingTimeInterval(60)
+    }
+}
+
+struct ReminderEditorOverlayView: View {
+    private enum Layout {
+        static let containerWidth: CGFloat = 292
+        static let containerSpacing: CGFloat = 0
+        static let titleSpacing: CGFloat = 2
+        static let topPadding: CGFloat = 14
+        static let horizontalPadding: CGFloat = 14
+        static let formVerticalPadding: CGFloat = 10
+        static let footerPadding: CGFloat = 14
+        static let actionButtonHeight: CGFloat = 34
+        static let closeButtonSize: CGFloat = 28
+    }
+
+    let theme: PanelTheme
+    @Binding var title: String
+    @Binding var scheduledAt: Date
+    @Binding var recurrenceRule: RecurrenceRule?
+    let validationMessage: String?
+    let onCancel: () -> Void
+    let onSave: () -> Void
+    let onDismissValidationMessage: () -> Void
+
+    @ObservedObject private var themeManager = ThemeManager.shared
+
+    private var isCandy: Bool { themeManager.isCandyTheme }
+
+    private var canSave: Bool {
+        !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var minimumSelectableDate: Date {
+        ReminderComposerFieldsView<EmptyView>.minimumSelectableDate(from: Date())
+    }
+
+    var body: some View {
+        ZStack {
+            Rectangle()
+                .fill(RemindersPalette.overlayDim)
+                .ignoresSafeArea()
+                .onTapGesture(perform: onCancel)
+
+            editorCard
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        }
+    }
+
+    private var editorCard: some View {
+        VStack(spacing: Layout.containerSpacing) {
+            header
+
+            DividerLineView(color: RemindersPalette.border.opacity(isCandy ? 0.65 : 1))
+                .padding(.horizontal, Layout.horizontalPadding)
+
+            ReminderComposerFieldsView(
+                title: $title,
+                scheduledAt: $scheduledAt,
+                recurrenceRule: $recurrenceRule,
+                validationMessage: validationMessage,
+                titlePlaceholder: "修改待办...",
+                minimumSelectableDate: minimumSelectableDate,
+                contentPadding: EdgeInsets(
+                    top: Layout.formVerticalPadding,
+                    leading: Layout.horizontalPadding,
+                    bottom: Layout.formVerticalPadding,
+                    trailing: Layout.horizontalPadding
+                ),
+                schedulePickerDisplayMode: .inline,
+                schedulePickerSizeVariant: .compact,
+                onSubmit: onSave,
+                onDismissValidationMessage: onDismissValidationMessage
+            ) {
+                EmptyView()
+            }
+
+            footer
+        }
+        .frame(width: Layout.containerWidth)
+        .background(
+            RemindersPalette.panel,
+            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(RemindersPalette.border.opacity(isCandy ? 0.86 : 1), lineWidth: 0.85)
+        }
+        .shadow(color: RemindersPalette.shadow.opacity(isCandy ? 0.16 : 0.3), radius: 22, x: 0, y: 12)
+        .padding(.horizontal, RemindersLayout.panelHorizontalInset)
+    }
+
+    private var header: some View {
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: Layout.titleSpacing) {
+                Text("编辑待办")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(RemindersPalette.primaryText)
+
+                Text("修改标题、时间和重复规则，保存后立即生效。")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(RemindersPalette.tertiaryText)
+            }
+
+            Spacer(minLength: 0)
+
+            Button(action: onCancel) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(RemindersPalette.secondaryText)
+                    .frame(width: Layout.closeButtonSize, height: Layout.closeButtonSize)
+                    .background(RemindersPalette.field, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.top, Layout.topPadding)
+        .padding(.horizontal, Layout.horizontalPadding)
+        .padding(.bottom, 12)
+    }
+
+    private var footer: some View {
+        HStack(spacing: 8) {
+            Button(action: onCancel) {
+                Text("取消")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(RemindersPalette.secondaryText)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: Layout.actionButtonHeight)
+                    .background(RemindersPalette.field, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+            }
+            .buttonStyle(.plain)
+
+            Button(action: onSave) {
+                Text("保存")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(RemindersPalette.primaryText)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: Layout.actionButtonHeight)
+                    .background(
+                        isCandy
+                            ? AnyShapeStyle(LinearGradient(colors: [RemindersPalette.accentGreen, Color(hex: 0x4E725F)], startPoint: .top, endPoint: .bottom))
+                            : AnyShapeStyle(RemindersPalette.accentBlue),
+                        in: RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    )
+                    .opacity(canSave ? 1 : 0.62)
+            }
+            .buttonStyle(.plain)
+            .disabled(!canSave)
+        }
+        .padding(.horizontal, Layout.footerPadding)
+        .padding(.top, 2)
+        .padding(.bottom, Layout.footerPadding)
     }
 }
 
@@ -668,6 +922,7 @@ struct ReminderRowView: View {
     let theme: PanelTheme
     let isFocused: Bool
     let onToggleCompletion: () -> Void
+    let onEdit: () -> Void
     let onFocus: () -> Void
     let onSnooze: (SnoozeOption) -> Void
     let onDelete: () -> Void
@@ -902,7 +1157,7 @@ struct ReminderRowView: View {
                     }
                 }
             }
-            .frame(width: 23, height: 23)
+            .frame(width: 28, height: 28)
             .shadow(color: Color(hex: 0x927553, opacity: isHoverActive ? 0.16 : 0.1), radius: isHoverActive ? 8 : 5, x: 0, y: isHoverActive ? 4 : 2)
             .scaleEffect(isHoverActive ? 1.03 : 1)
             .contentShape(Circle())
@@ -946,7 +1201,7 @@ struct ReminderRowView: View {
                     }
                 }
             }
-            .frame(width: 23, height: 23)
+            .frame(width: 28, height: 28)
             .shadow(color: menuButtonShadowColor, radius: isHoverActive ? 8 : 5, x: 0, y: isHoverActive ? 4 : 2)
             .scaleEffect(isHoverActive ? 1.03 : 1)
             .contentShape(Circle())
@@ -966,6 +1221,15 @@ struct ReminderRowView: View {
             )
 
             if !item.isCompleted {
+                actionMenuButton(
+                    title: "编辑",
+                    systemName: "square.and.pencil",
+                    action: {
+                        isShowingActionMenu = false
+                        onEdit()
+                    }
+                )
+
                 actionMenuButton(
                     title: isFocused ? "收起提醒" : "查看提醒",
                     systemName: "bell",
@@ -1283,6 +1547,7 @@ struct CompletedHistoryOverlayView: View {
                                         theme: theme,
                                         isFocused: false,
                                         onToggleCompletion: {},
+                                        onEdit: {},
                                         onFocus: {},
                                         onSnooze: { _ in },
                                         onDelete: { onDelete(item) }

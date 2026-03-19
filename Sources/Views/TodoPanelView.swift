@@ -14,22 +14,31 @@ struct TodoPanelView: View {
     @Binding var draftTitle: String
     @Binding var draftScheduledAt: Date
     @Binding var draftRecurrenceRule: RecurrenceRule?
+    @Binding var editingTitle: String
+    @Binding var editingScheduledAt: Date
+    @Binding var editingRecurrenceRule: RecurrenceRule?
     let items: [ReminderItem]
     let completedCount: Int
     let completedHistoryItems: [ReminderItem]
     let highlightedReminderID: ReminderItem.ID?
+    let editingReminderID: ReminderItem.ID?
     let listScope: ReminderListScope
     let isAIParsing: Bool
     let draftValidationMessage: String?
+    let editingValidationMessage: String?
     let onToggleTheme: () -> Void
     let onChangeScope: (ReminderListScope) -> Void
     let onAddReminder: () -> Void
     let onAIParse: () -> Void
     let onDismissDraftValidationMessage: () -> Void
+    let onDismissEditingValidationMessage: () -> Void
     let onToggleCompletion: (ReminderItem) -> Void
+    let onEditReminder: (ReminderItem) -> Void
     let onFocusReminder: (ReminderItem) -> Void
     let onSnoozeReminder: (ReminderItem, SnoozeOption) -> Void
     let onDeleteReminder: (ReminderItem) -> Void
+    let onCancelEditingReminder: () -> Void
+    let onSaveEditingReminder: () -> Void
     let onClearCompleted: () -> Void
 
     @State private var isShowingCompletedHistory = false
@@ -45,6 +54,9 @@ struct TodoPanelView: View {
             }
             .overlay {
                 historyOverlay
+            }
+            .overlay {
+                editingOverlay
             }
             .shadow(color: RemindersPalette.shadow, radius: 20, x: 0, y: 10)
     }
@@ -128,6 +140,23 @@ struct TodoPanelView: View {
         }
     }
 
+    @ViewBuilder
+    private var editingOverlay: some View {
+        if editingReminderID != nil {
+            ReminderEditorOverlayView(
+                theme: theme,
+                title: $editingTitle,
+                scheduledAt: $editingScheduledAt,
+                recurrenceRule: $editingRecurrenceRule,
+                validationMessage: editingValidationMessage,
+                onCancel: onCancelEditingReminder,
+                onSave: onSaveEditingReminder,
+                onDismissValidationMessage: onDismissEditingValidationMessage
+            )
+            .transition(.opacity)
+        }
+    }
+
     private var panelShape: some InsettableShape {
         RoundedRectangle(cornerRadius: Layout.panelCornerRadius, style: .continuous)
     }
@@ -138,6 +167,7 @@ struct TodoPanelView: View {
             theme: theme,
             isFocused: highlightedReminderID == item.id,
             onToggleCompletion: { onToggleCompletion(item) },
+            onEdit: { onEditReminder(item) },
             onFocus: { onFocusReminder(item) },
             onSnooze: { option in onSnoozeReminder(item, option) },
             onDelete: { onDeleteReminder(item) }
