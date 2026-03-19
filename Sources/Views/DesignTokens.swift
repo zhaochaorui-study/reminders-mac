@@ -25,6 +25,17 @@ enum RemindersLayout {
     static let panelHorizontalInset: CGFloat = 16
     static let listVerticalInset: CGFloat = 10
     static let listRowSpacing: CGFloat = 6
+    static let reminderRowTitleHeight: CGFloat = 16
+    static let reminderRowMetadataHeight: CGFloat = 18
+    static let reminderRowMetadataBadgeHorizontalInset: CGFloat = 6
+    static let reminderRowMetadataBadgeTrailingInset: CGFloat = 7
+    static let reminderRowMetadataBadgeVerticalInset: CGFloat = 2.5
+}
+
+struct ReminderMetadataBadgeStyle {
+    let foreground: Color
+    let background: Color
+    let border: Color
 }
 
 // MARK: - Palette
@@ -85,6 +96,61 @@ enum RemindersPalette {
     static var accentRedDark: Color { accentRed }
     static var accentPinkDark: Color { accentPink }
     static var accentGreenDark: Color { accentGreen }
+
+    static func recurrenceBadgeStyle(for rule: RecurrenceRule, isCompleted: Bool) -> ReminderMetadataBadgeStyle {
+        let baseStyle: ReminderMetadataBadgeStyle
+
+        switch rule {
+        case .daily:
+            baseStyle = candy
+                ? ReminderMetadataBadgeStyle(
+                    foreground: Color(hex: 0x496789),
+                    background: Color(hex: 0xDDE8F8),
+                    border: Color(hex: 0xABC0E1)
+                )
+                : ReminderMetadataBadgeStyle(
+                    foreground: Color(hex: 0x89B4D8),
+                    background: Color(hex: 0x1A2A38),
+                    border: Color(hex: 0x2E4460)
+                )
+
+        case .weekly:
+            baseStyle = candy
+                ? ReminderMetadataBadgeStyle(
+                    foreground: Color(hex: 0x4E7152),
+                    background: Color(hex: 0xDCEEDC),
+                    border: Color(hex: 0xAAC8AC)
+                )
+                : ReminderMetadataBadgeStyle(
+                    foreground: Color(hex: 0x7EC488),
+                    background: Color(hex: 0x182B1E),
+                    border: Color(hex: 0x2D5038)
+                )
+
+        case .cron:
+            baseStyle = candy
+                ? ReminderMetadataBadgeStyle(
+                    foreground: Color(hex: 0x78567F),
+                    background: Color(hex: 0xEEDFF2),
+                    border: Color(hex: 0xCCB2D4)
+                )
+                : ReminderMetadataBadgeStyle(
+                    foreground: Color(hex: 0xB898D0),
+                    background: Color(hex: 0x261A32),
+                    border: Color(hex: 0x523A68)
+                )
+        }
+
+        guard !isCompleted else {
+            return ReminderMetadataBadgeStyle(
+                foreground: tertiaryText,
+                background: baseStyle.background.opacity(candy ? 0.55 : 0.32),
+                border: baseStyle.border.opacity(candy ? 0.58 : 0.36)
+            )
+        }
+
+        return baseStyle
+    }
 }
 
 extension Color {

@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationModels)
+import FoundationModels
+#endif
 
 struct AIParseResult: Sendable {
     let title: String
@@ -6,13 +9,19 @@ struct AIParseResult: Sendable {
     let recurrenceRule: RecurrenceRule?
 }
 
-private struct AIServiceConfiguration: Sendable {
+enum AISystemDefaultModelStatus: Equatable, Sendable {
+    case available
+    case unavailable(String)
+}
+
+struct AIServiceConfiguration: Sendable {
     let apiURL: URL
     let apiKey: String
+    let apiSecret: String
     let model: String
 }
 
-private enum AIServiceConfigurationLoader {
+enum AIServiceConfigurationLoader {
     private enum Defaults {
         static let apiURL = "https://api.deepseek.com/v1/chat/completions"
         static let model = "deepseek-chat"
@@ -21,17 +30,92 @@ private enum AIServiceConfigurationLoader {
         static let localEnvironmentFileName = ".env.local"
     }
 
+    private enum EnvironmentKeys {
+        static let apiKey = "DEEPSEEK_API_KEY"
+        static let apiSecret = "DEEPSEEK_API_SECRET"
+        static let apiURL = "DEEPSEEK_API_URL"
+        static let model = "DEEPSEEK_MODEL"
+    }
+
     static func load() throws -> AIServiceConfiguration {
         let values = mergedValues()
-        let apiKey = try requiredValue(named: "DEEPSEEK_API_KEY", from: values)
-        let apiURLString = sanitizedValue(named: "DEEPSEEK_API_URL", from: values) ?? Defaults.apiURL
-        let model = sanitizedValue(named: "DEEPSEEK_MODEL", from: values) ?? Defaults.model
+        return try configuration(from: values)
+    }
 
-        guard let apiURL = URL(string: apiURLString) else {
-            throw AIServiceError.invalidConfiguration("DEEPSEEK_API_URL")
+    static func persistedCustomConfiguration() -> (apiBaseURL: String, apiKey: String) {
+        let fileValues = loadFileBackedValues()
+
+        let apiBaseURL = sanitizedValue(named: EnvironmentKeys.apiURL, from: fileValues)
+            ?? LocalSecretsStore.value(for: .llmAPIBaseURL)
+        let apiKey = sanitizedValue(named: EnvironmentKeys.apiKey, from: fileValues)
+            ?? LocalSecretsStore.value(for: .llmAPIKey)
+
+        return (apiBaseURL, apiKey)
+    }
+
+    static func saveCustomConfiguration(apiBaseURL: String, apiKey: String) {
+        let normalizedAPIBaseURL = normalizedValue(apiBaseURL)
+        let normalizedAPIKey = normalizedValue(apiKey)
+        let updatedContent = updatedEnvironmentFileContent(
+            from: preferredEnvironmentFileContent(),
+            updates: [
+                EnvironmentKeys.apiURL: normalizedAPIBaseURL,
+                EnvironmentKeys.apiKey: normalizedAPIKey,
+            ]
+        )
+
+        guard let targetURL = preferredEnvironmentFileURLForWriting() else {
+            NSLog("[AIConfig] 未找到可写的 .env.local 路径")
+            return
         }
 
-        return AIServiceConfiguration(apiURL: apiURL, apiKey: apiKey, model: model)
+        do {
+            try writeEnvironmentFileContent(updatedContent, to: targetURL)
+
+            if let bundleURL = bundleEnvironmentFileURL(), bundleURL != targetURL {
+                try? writeEnvironmentFileContent(updatedContent, to: bundleURL)
+            }
+        } catch {
+            NSLog("[AIConfig] 写入环境配置失败: %@", error.localizedDescription)
+        }
+    }
+
+    static func load(
+        overridingAPIBaseURL apiBaseURL: String? = nil,
+        apiKey: String? = nil
+    ) throws -> AIServiceConfiguration {
+        var values = mergedValues()
+
+        if let apiBaseURL {
+            if let normalizedAPIBaseURL = normalizedValue(apiBaseURL) {
+                values[EnvironmentKeys.apiURL] = normalizedAPIBaseURL
+            } else {
+                values.removeValue(forKey: EnvironmentKeys.apiURL)
+            }
+        }
+
+        if let apiKey {
+            if let normalizedAPIKey = normalizedValue(apiKey) {
+                values[EnvironmentKeys.apiKey] = normalizedAPIKey
+            } else {
+                values.removeValue(forKey: EnvironmentKeys.apiKey)
+            }
+        }
+
+        return try configuration(from: values)
+    }
+
+    private static func configuration(from values: [String: String]) throws -> AIServiceConfiguration {
+        let apiKey = try requiredValue(named: EnvironmentKeys.apiKey, from: values)
+        let apiSecret = sanitizedValue(named: EnvironmentKeys.apiSecret, from: values) ?? ""
+        let apiURLString = sanitizedValue(named: EnvironmentKeys.apiURL, from: values) ?? Defaults.apiURL
+        let model = sanitizedValue(named: EnvironmentKeys.model, from: values) ?? Defaults.model
+
+        guard let apiURL = resolvedAPIURL(from: apiURLString) else {
+            throw AIServiceError.invalidConfiguration(EnvironmentKeys.apiURL)
+        }
+
+        return AIServiceConfiguration(apiURL: apiURL, apiKey: apiKey, apiSecret: apiSecret, model: model)
     }
 
     private static func mergedValues() -> [String: String] {
@@ -42,7 +126,55 @@ private enum AIServiceConfigurationLoader {
             values[key] = value
         }
 
+        for (key, value) in savedPreferenceValues() {
+            values[key] = value
+        }
+
         return values
+    }
+
+    private static func savedPreferenceValues() -> [String: String] {
+        var values: [String: String] = [:]
+
+        if let apiBaseURL = normalizedValue(ReminderPreferenceStorage.llmAPIBaseURL()) {
+            values[EnvironmentKeys.apiURL] = apiBaseURL
+        }
+
+        if let apiKey = normalizedValue(ReminderPreferenceStorage.llmAPIKey()) {
+            values[EnvironmentKeys.apiKey] = apiKey
+        }
+
+        if let apiSecret = normalizedValue(ReminderPreferenceStorage.llmAPISecret()) {
+            values[EnvironmentKeys.apiSecret] = apiSecret
+        }
+
+        return values
+    }
+
+    private static func resolvedAPIURL(from rawValue: String) -> URL? {
+        guard let url = URL(string: rawValue),
+              let scheme = url.scheme, !scheme.isEmpty,
+              let host = url.host, !host.isEmpty,
+              var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        else {
+            return nil
+        }
+
+        components.path = normalizedAPIPath(from: components.path)
+        return components.url
+    }
+
+    private static func normalizedAPIPath(from path: String) -> String {
+        let trimmedPath = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard !trimmedPath.isEmpty else {
+            return "/v1/chat/completions"
+        }
+
+        if trimmedPath.hasSuffix("chat/completions") {
+            return "/\(trimmedPath)"
+        }
+
+        return "/\(trimmedPath)/chat/completions"
     }
 
     private static func loadFileBackedValues() -> [String: String] {
@@ -57,10 +189,11 @@ private enum AIServiceConfigurationLoader {
     private static func candidateEnvironmentFileURLs() -> [URL] {
         var urls: [URL] = []
 
-        if let bundleURL = Bundle.main.url(
-            forResource: Defaults.bundleEnvironmentResourceName,
-            withExtension: Defaults.bundleEnvironmentResourceExtension
-        ) {
+        if let projectEnvironmentURL = projectEnvironmentFileURL() {
+            urls.append(projectEnvironmentURL)
+        }
+
+        if let bundleURL = bundleEnvironmentFileURL() {
             urls.append(bundleURL)
         }
 
@@ -68,9 +201,158 @@ private enum AIServiceConfigurationLoader {
             fileURLWithPath: FileManager.default.currentDirectoryPath,
             isDirectory: true
         )
-        urls.append(currentDirectoryURL.appendingPathComponent(Defaults.localEnvironmentFileName))
+        let currentDirectoryEnvironmentURL = currentDirectoryURL.appendingPathComponent(Defaults.localEnvironmentFileName)
+        if urls.contains(currentDirectoryEnvironmentURL) == false {
+            urls.append(currentDirectoryEnvironmentURL)
+        }
 
         return urls
+    }
+
+    private static func bundleEnvironmentFileURL() -> URL? {
+        Bundle.main.url(
+            forResource: Defaults.bundleEnvironmentResourceName,
+            withExtension: Defaults.bundleEnvironmentResourceExtension
+        )
+    }
+
+    private static func projectEnvironmentFileURL() -> URL? {
+        for baseURL in searchBaseURLs() {
+            if let projectDirectoryURL = nearestProjectDirectory(startingAt: baseURL) {
+                return projectDirectoryURL.appendingPathComponent(Defaults.localEnvironmentFileName)
+            }
+        }
+
+        return nil
+    }
+
+    private static func preferredEnvironmentFileURLForWriting() -> URL? {
+        if let projectEnvironmentURL = projectEnvironmentFileURL() {
+            return projectEnvironmentURL
+        }
+
+        if let bundleURL = bundleEnvironmentFileURL() {
+            return bundleURL
+        }
+
+        let currentDirectoryURL = URL(
+            fileURLWithPath: FileManager.default.currentDirectoryPath,
+            isDirectory: true
+        )
+        return currentDirectoryURL.appendingPathComponent(Defaults.localEnvironmentFileName)
+    }
+
+    private static func searchBaseURLs() -> [URL] {
+        var urls: [URL] = []
+        let currentDirectoryURL = URL(
+            fileURLWithPath: FileManager.default.currentDirectoryPath,
+            isDirectory: true
+        )
+        urls.append(currentDirectoryURL)
+
+        let bundleAncestorsBaseURL = Bundle.main.bundleURL.deletingLastPathComponent()
+        if urls.contains(bundleAncestorsBaseURL) == false {
+            urls.append(bundleAncestorsBaseURL)
+        }
+
+        return urls
+    }
+
+    private static func nearestProjectDirectory(startingAt baseURL: URL) -> URL? {
+        var currentURL = baseURL.standardizedFileURL
+
+        while true {
+            let packageURL = currentURL.appendingPathComponent("Package.swift")
+            let gitURL = currentURL.appendingPathComponent(".git")
+            if FileManager.default.fileExists(atPath: packageURL.path)
+                || FileManager.default.fileExists(atPath: gitURL.path) {
+                return currentURL
+            }
+
+            let parentURL = currentURL.deletingLastPathComponent()
+            if parentURL == currentURL {
+                return nil
+            }
+
+            currentURL = parentURL
+        }
+    }
+
+    private static func preferredEnvironmentFileContent() -> String {
+        for url in candidateEnvironmentFileURLs() {
+            guard let content = try? String(contentsOf: url, encoding: .utf8) else { continue }
+            return content
+        }
+
+        return ""
+    }
+
+    private static func updatedEnvironmentFileContent(
+        from content: String,
+        updates: [String: String?]
+    ) -> String {
+        var lines = content.components(separatedBy: .newlines)
+        if lines.count == 1, lines[0].isEmpty {
+            lines = []
+        }
+
+        for (key, value) in updates {
+            applyEnvironmentUpdate(key: key, value: value, to: &lines)
+        }
+
+        while let lastLine = lines.last,
+              lastLine.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            lines.removeLast()
+        }
+
+        guard lines.isEmpty == false else { return "" }
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    private static func applyEnvironmentUpdate(
+        key: String,
+        value: String?,
+        to lines: inout [String]
+    ) {
+        let matchingIndexes = lines.indices.filter { index in
+            environmentKey(from: lines[index]) == key
+        }
+
+        if let firstIndex = matchingIndexes.first {
+            if let value {
+                lines[firstIndex] = "\(key)=\(value)"
+            } else {
+                lines.remove(at: firstIndex)
+            }
+
+            for index in matchingIndexes.dropFirst().reversed() {
+                lines.remove(at: index)
+            }
+            return
+        }
+
+        guard let value else { return }
+        lines.append("\(key)=\(value)")
+    }
+
+    private static func environmentKey(from line: String) -> String? {
+        let normalizedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalizedLine.isEmpty == false, normalizedLine.hasPrefix("#") == false else {
+            return nil
+        }
+
+        let declaration = normalizedDeclaration(from: normalizedLine)
+        let segments = declaration.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+        guard segments.isEmpty == false else { return nil }
+
+        let key = String(segments[0]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return key.isEmpty ? nil : key
+    }
+
+    private static func writeEnvironmentFileContent(_ content: String, to url: URL) throws {
+        let directoryURL = url.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        try content.write(to: url, atomically: true, encoding: .utf8)
     }
 
     private static func parseEnvironmentFile(at url: URL) -> [String: String] {
@@ -158,12 +440,77 @@ final class AIService: @unchecked Sendable {
         return f
     }()
 
+    func systemDefaultModelStatus() -> AISystemDefaultModelStatus {
+        #if canImport(FoundationModels)
+        if #available(macOS 26.0, *) {
+            switch SystemLanguageModel.default.availability {
+            case .available:
+                return .available
+            case .unavailable(let reason):
+                return .unavailable(systemDefaultModelUnavailableMessage(for: reason))
+            }
+        }
+        #endif
+
+        return .unavailable("当前 macOS 版本不支持系统免费默认模型")
+    }
+
     func parse(_ input: String) async throws -> AIParseResult {
-        let configuration = try AIServiceConfigurationLoader.load()
         let referenceDate = Date()
+        if ReminderPreferenceStorage.prefersSystemDefaultAIModel() {
+            switch systemDefaultModelStatus() {
+            case .available:
+                return try await parseWithSystemDefaultModel(input, referenceDate: referenceDate)
+            case .unavailable(let reason):
+                do {
+                    return try await parseWithRemoteModel(input, referenceDate: referenceDate)
+                } catch let error as AIServiceError where error.isConfigurationError {
+                    throw AIServiceError.systemDefaultModelUnavailable(reason)
+                }
+            }
+        }
+
+        return try await parseWithRemoteModel(input, referenceDate: referenceDate)
+    }
+
+    func testConnection(apiBaseURL: String, apiKey: String) async throws -> String {
+        let configuration = try AIServiceConfigurationLoader.load(
+            overridingAPIBaseURL: apiBaseURL,
+            apiKey: apiKey
+        )
+
+        let json = try await requestChatCompletions(
+            configuration: configuration,
+            messages: [
+                ["role": "user", "content": "Reply with OK only."]
+            ],
+            temperature: 0,
+            maxTokens: 8
+        )
+        try validateCompletionResponse(json)
+        return configuration.model
+    }
+
+    private func parseWithRemoteModel(_ input: String, referenceDate: Date) async throws -> AIParseResult {
+        let configuration = try AIServiceConfigurationLoader.load()
+        let json = try await requestChatCompletions(
+            configuration: configuration,
+            messages: [
+                ["role": "system", "content": parsingInstructions(referenceDate: referenceDate)],
+                ["role": "user", "content": input]
+            ],
+            temperature: 0.1,
+            maxTokens: 200
+        )
+        let content = try extractMessageContent(from: json)
+        let result = try parseJSON(content)
+        return finalizedParseResult(result, for: input, referenceDate: referenceDate)
+    }
+
+    private func parsingInstructions(referenceDate: Date) -> String {
         let now = currentDateFormatter.string(from: referenceDate)
 
-        let systemPrompt = """
+        return """
         你是一个待办事项解析助手。用户会输入一段自然语言描述的待办事项，你需要从中提取：
         1. title: 待办事项的标题（简洁明了）
         2. scheduled_at: 首次提醒时间，格式为 yyyy-MM-dd HH:mm
@@ -192,45 +539,181 @@ final class AIService: @unchecked Sendable {
         或带重复：
         {"title": "待办标题", "scheduled_at": "2026-03-17 15:00", "recurrence": {"type": "daily", "hour": 15, "minute": 0}}
         """
+    }
 
+    private func finalizedParseResult(
+        _ result: AIParseResult,
+        for input: String,
+        referenceDate: Date
+    ) -> AIParseResult {
+        AIParseResult(
+            title: result.title,
+            scheduledAt: resolvedScheduledAt(for: input, fallback: result.scheduledAt, referenceDate: referenceDate),
+            recurrenceRule: result.recurrenceRule
+        )
+    }
+
+    private func parseWithSystemDefaultModel(_ input: String, referenceDate: Date) async throws -> AIParseResult {
+        #if canImport(FoundationModels)
+        if #available(macOS 26.0, *) {
+            let session = LanguageModelSession(
+                model: .default,
+                instructions: parsingInstructions(referenceDate: referenceDate)
+            )
+            let response = try await session.respond(to: input)
+            let result = try parseJSON(response.content)
+            return finalizedParseResult(result, for: input, referenceDate: referenceDate)
+        }
+        #endif
+
+        throw AIServiceError.systemDefaultModelUnavailable("当前 macOS 版本不支持系统免费默认模型")
+    }
+
+    private func systemDefaultModelUnavailableMessage(
+        for reason: Any
+    ) -> String {
+        #if canImport(FoundationModels)
+        if #available(macOS 26.0, *),
+           let reason = reason as? SystemLanguageModel.Availability.UnavailableReason {
+            switch reason {
+            case .deviceNotEligible:
+                return "当前设备不支持系统免费默认模型"
+            case .appleIntelligenceNotEnabled:
+                return "系统智能功能还没开启"
+            case .modelNotReady:
+                return "系统模型还没准备好，可能还在下载"
+            @unknown default:
+                return "系统免费默认模型当前不可用"
+            }
+        }
+        #endif
+
+        return "系统免费默认模型当前不可用"
+    }
+
+    private func requestChatCompletions(
+        configuration: AIServiceConfiguration,
+        messages: [[String: String]],
+        temperature: Double,
+        maxTokens: Int
+    ) async throws -> [String: Any] {
         let body: [String: Any] = [
             "model": configuration.model,
-            "messages": [
-                ["role": "system", "content": systemPrompt],
-                ["role": "user", "content": input]
-            ],
-            "temperature": 0.1,
-            "max_tokens": 200
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": maxTokens
         ]
 
         var request = URLRequest(url: configuration.apiURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(configuration.apiKey)", forHTTPHeaderField: "Authorization")
+        if !configuration.apiSecret.isEmpty {
+            request.setValue(configuration.apiSecret, forHTTPHeaderField: "X-API-Secret")
+        }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         request.timeoutInterval = 15
 
-        let (data, response) = try await URLSession.shared.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-            throw AIServiceError.requestFailed
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            throw AIServiceError.requestFailed(statusCode: nil, message: error.localizedDescription)
         }
 
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let choices = json["choices"] as? [[String: Any]],
-              let firstChoice = choices.first,
-              let message = firstChoice["message"] as? [String: Any],
-              let content = message["content"] as? String
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw AIServiceError.invalidResponse
+        }
+
+        guard httpResponse.statusCode == 200 else {
+            throw AIServiceError.requestFailed(
+                statusCode: httpResponse.statusCode,
+                message: extractErrorMessage(from: data)
+            )
+        }
+
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw AIServiceError.invalidResponse
+        }
+
+        return json
+    }
+
+    private func extractMessageContent(from json: [String: Any]) throws -> String {
+        guard let choices = json["choices"] as? [[String: Any]],
+              let firstChoice = choices.first
         else {
             throw AIServiceError.invalidResponse
         }
 
-        let result = try parseJSON(content)
-        return AIParseResult(
-            title: result.title,
-            scheduledAt: resolvedScheduledAt(for: input, fallback: result.scheduledAt, referenceDate: referenceDate),
-            recurrenceRule: result.recurrenceRule
-        )
+        if let message = firstChoice["message"] as? [String: Any],
+           let content = messageContent(from: message) {
+            return content
+        }
+
+        if let content = firstChoice["text"] as? String,
+           let normalized = normalizedText(content) {
+            return normalized
+        }
+
+        throw AIServiceError.invalidResponse
+    }
+
+    private func validateCompletionResponse(_ json: [String: Any]) throws {
+        guard let choices = json["choices"] as? [[String: Any]], !choices.isEmpty else {
+            throw AIServiceError.invalidResponse
+        }
+    }
+
+    private func messageContent(from message: [String: Any]) -> String? {
+        if let content = message["content"] as? String {
+            return normalizedText(content)
+        }
+
+        if let contentParts = message["content"] as? [[String: Any]] {
+            let text = contentParts
+                .compactMap { part -> String? in
+                    guard let value = part["text"] as? String else { return nil }
+                    return normalizedText(value)
+                }
+                .joined(separator: "\n")
+
+            return normalizedText(text)
+        }
+
+        return nil
+    }
+
+    private func extractErrorMessage(from data: Data) -> String? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            guard let rawText = String(data: data, encoding: .utf8) else { return nil }
+            return normalizedText(rawText)
+        }
+
+        if let error = json["error"] as? [String: Any] {
+            if let message = error["message"] as? String,
+               let normalized = normalizedText(message) {
+                return normalized
+            }
+
+            if let code = error["code"] as? String,
+               let normalized = normalizedText(code) {
+                return normalized
+            }
+        }
+
+        if let message = json["message"] as? String,
+           let normalized = normalizedText(message) {
+            return normalized
+        }
+
+        return nil
+    }
+
+    private func normalizedText(_ text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private func parseJSON(_ content: String) throws -> AIParseResult {
@@ -344,20 +827,44 @@ final class AIService: @unchecked Sendable {
 enum AIServiceError: LocalizedError {
     case missingConfiguration(String)
     case invalidConfiguration(String)
-    case requestFailed
+    case systemDefaultModelUnavailable(String)
+    case requestFailed(statusCode: Int?, message: String?)
     case invalidResponse
     case parseFailed
     case noTitle
     case noTime
     case unrecognized
 
+    var isConfigurationError: Bool {
+        switch self {
+        case .missingConfiguration, .invalidConfiguration:
+            return true
+        default:
+            return false
+        }
+    }
+
     var errorDescription: String? {
         switch self {
         case .missingConfiguration(let key):
-            return "AI 配置缺失：\(key)，请在 .env.local 或环境变量里补上"
+            return "AI 配置缺失：\(key)，请在设置页、`.env.local` 或环境变量里补上"
         case .invalidConfiguration(let key):
             return "AI 配置无效：\(key)，检查一下格式别写飞了"
-        case .requestFailed:
+        case .systemDefaultModelUnavailable(let reason):
+            return "系统免费默认模型不可用：\(reason)。请关闭该开关后改用自定义配置，或者等系统模型就绪。"
+        case .requestFailed(let statusCode, let message):
+            if let statusCode, let message, !message.isEmpty {
+                return "AI 请求失败（HTTP \(statusCode)）：\(message)"
+            }
+
+            if let statusCode {
+                return "AI 请求失败（HTTP \(statusCode)），检查接口地址、模型和密钥"
+            }
+
+            if let message, !message.isEmpty {
+                return "AI 请求失败：\(message)"
+            }
+
             return "AI 解析失败，请稍后重试"
         case .invalidResponse:
             return "AI 返回内容不可用，请稍后重试"

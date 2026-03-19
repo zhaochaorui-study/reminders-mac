@@ -23,6 +23,7 @@ let package = Package(
                     "-Xlinker", "__info_plist",
                     "-Xlinker", "Resources/Info.plist",
                 ]),
+                .linkedFramework("Security"),
                 .linkedLibrary("sqlite3"),
             ]
         ),

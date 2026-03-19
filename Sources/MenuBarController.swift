@@ -5,6 +5,7 @@ import SwiftUI
 @MainActor
 final class MenuBarController: NSObject, ObservableObject {
     private let store: ReminderStore
+    private let onShowSettings: @MainActor () -> Void
     private let statusItem: NSStatusItem
     private let panel: MenuBarPanel
     private let contextMenu = NSMenu()
@@ -22,8 +23,9 @@ final class MenuBarController: NSObject, ObservableObject {
     private let defaultPanelAnchorPoint = CGPoint(x: 0.5, y: 1)
     private var panelContentAnchorPoint = CGPoint(x: 0.5, y: 1)
 
-    init(store: ReminderStore) {
+    init(store: ReminderStore, onShowSettings: @escaping @MainActor () -> Void) {
         self.store = store
+        self.onShowSettings = onShowSettings
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         self.panel = MenuBarPanel(
             contentRect: NSRect(origin: .zero, size: panelSize),
@@ -56,6 +58,12 @@ final class MenuBarController: NSObject, ObservableObject {
 
     private func configureContextMenu() {
         contextMenu.removeAllItems()
+        contextMenu.addItem(
+            withTitle: "设置…",
+            action: #selector(showSettings(_:)),
+            keyEquivalent: ""
+        )
+        contextMenu.addItem(.separator())
         contextMenu.addItem(
             withTitle: "退出",
             action: #selector(terminateApp(_:)),
@@ -361,6 +369,12 @@ final class MenuBarController: NSObject, ObservableObject {
     @objc
     private func terminateApp(_ sender: Any?) {
         NSApp.terminate(nil)
+    }
+
+    @objc
+    private func showSettings(_ sender: Any?) {
+        hidePanel(animated: false)
+        onShowSettings()
     }
 
     private func showContextMenu() {

@@ -28,11 +28,15 @@ final class ReminderStore: ObservableObject {
     @Published private(set) var isAIParsing: Bool = false
     @Published private(set) var draftValidationMessage: String?
 
+    private var cancellables: Set<AnyCancellable> = []
     private var reminderTimer: DispatchSourceTimer?
     private var presentedReminderIDs: Set<ReminderItem.ID> = []
     private var presentedAdvanceReminderIDs: Set<ReminderItem.ID> = []
+    private var webhookAttemptedReminderIDs: Set<ReminderItem.ID> = []
     private let windowManager = ReminderWindowManager()
     private let notificationManager = ReminderNotificationManager.shared
+    private let webhookNotifier = ReminderWebhookNotifier.shared
+    private let preferences = ReminderPreferences.shared
     private let db = DatabaseManager.shared
     private let ai = AIService.shared
 
@@ -81,6 +85,7 @@ final class ReminderStore: ObservableObject {
     init() {
         self.draftScheduledAt = Self.defaultDraftDate()
         setupWindowManagerCallbacks()
+        bindPreferences()
         notificationManager.requestAuthorizationIfNeeded()
         startReminderTicker()
         loadFromDatabase()
@@ -144,6 +149,7 @@ final class ReminderStore: ObservableObject {
 
         presentedReminderIDs.remove(item.id)
         presentedAdvanceReminderIDs.remove(item.id)
+        webhookAttemptedReminderIDs.remove(item.id)
         if highlightedReminderID == item.id {
             highlightedReminderID = nil
         }
@@ -172,6 +178,7 @@ final class ReminderStore: ObservableObject {
         notificationManager.cancelNotification(for: item.id)
         presentedReminderIDs.remove(item.id)
         presentedAdvanceReminderIDs.remove(item.id)
+        webhookAttemptedReminderIDs.remove(item.id)
         highlightedReminderID = nil
         scheduleNextRecurrence(for: currentItem)
         pendingItems = Self.sorted(items: pendingItems)
@@ -228,6 +235,7 @@ final class ReminderStore: ObservableObject {
         notificationManager.cancelNotification(for: item.id)
         presentedReminderIDs.remove(item.id)
         presentedAdvanceReminderIDs.remove(item.id)
+        webhookAttemptedReminderIDs.remove(item.id)
         if highlightedReminderID == item.id {
             highlightedReminderID = nil
         }
@@ -242,6 +250,7 @@ final class ReminderStore: ObservableObject {
         pendingItems.removeAll(where: { $0.id == item.id })
         presentedReminderIDs.remove(item.id)
         presentedAdvanceReminderIDs.remove(item.id)
+        webhookAttemptedReminderIDs.remove(item.id)
         windowManager.dismissWindow(for: item.id)
         notificationManager.cancelNotification(for: item.id)
 
@@ -263,6 +272,7 @@ final class ReminderStore: ObservableObject {
         pendingItems.removeAll(where: \.isCompleted)
         presentedReminderIDs.subtract(completedIDs)
         presentedAdvanceReminderIDs.subtract(completedIDs)
+        webhookAttemptedReminderIDs.subtract(completedIDs)
         reconcileHighlightedReminder()
         syncPendingNotifications()
         dbDeleteCompleted()
@@ -325,6 +335,35 @@ final class ReminderStore: ObservableObject {
         }
     }
 
+    private func bindPreferences() {
+        preferences.$systemNotificationsEnabled
+            .removeDuplicates()
+            .sink { [weak self] isEnabled in
+                guard let self else { return }
+                if isEnabled {
+                    self.notificationManager.requestAuthorizationIfNeeded()
+                }
+                self.syncPendingNotifications()
+            }
+            .store(in: &cancellables)
+
+        preferences.$inAppAlertsEnabled
+            .removeDuplicates()
+            .sink { [weak self] isEnabled in
+                self?.handleInAppAlertsEnabledChange(isEnabled)
+            }
+            .store(in: &cancellables)
+
+        Publishers.Merge(
+            preferences.$weComWebhookURL.removeDuplicates(),
+            preferences.$feishuWebhookURL.removeDuplicates()
+        )
+        .sink { [weak self] _ in
+            self?.handleWebhookSettingsChange()
+        }
+        .store(in: &cancellables)
+    }
+
     private func startReminderTicker() {
         scheduleNextTick()
     }
@@ -352,6 +391,8 @@ final class ReminderStore: ObservableObject {
         let activeItems = pendingItems.filter { !$0.isCompleted }
         guard !activeItems.isEmpty else { return 60 }
 
+        let inAppAlertsEnabled = preferences.inAppAlertsEnabled
+        let webhookEnabled = preferences.hasConfiguredWebhook
         var earliest: TimeInterval = 60
 
         for item in activeItems {
@@ -359,7 +400,10 @@ final class ReminderStore: ObservableObject {
 
             if untilDue <= 0 {
                 // 已到期但未弹窗，立即触发
-                if !presentedReminderIDs.contains(item.id) {
+                if inAppAlertsEnabled && !presentedReminderIDs.contains(item.id) {
+                    return 0.5
+                }
+                if webhookEnabled && !webhookAttemptedReminderIDs.contains(item.id) {
                     return 0.5
                 }
                 continue
@@ -367,12 +411,14 @@ final class ReminderStore: ObservableObject {
 
             // 提前通知窗口
             let untilAdvance = untilDue - Constants.advanceNoticeLeadTime
-            if untilAdvance > 0 && !presentedAdvanceReminderIDs.contains(item.id) {
+            if inAppAlertsEnabled && untilAdvance > 0 && !presentedAdvanceReminderIDs.contains(item.id) {
                 earliest = min(earliest, untilAdvance)
             }
 
-            // 到期时间
-            earliest = min(earliest, untilDue)
+            if inAppAlertsEnabled || webhookEnabled {
+                // 到期时间
+                earliest = min(earliest, untilDue)
+            }
 
             // tone 切换点（1 小时前 neutral → warning）
             let untilToneChange = untilDue - 60 * 60
@@ -396,6 +442,10 @@ final class ReminderStore: ObservableObject {
     }
 
     private func presentAdvanceNoticesIfNeeded(referenceDate: Date) {
+        guard preferences.inAppAlertsEnabled else {
+            return
+        }
+
         let eligibleItems = pendingItems.filter { item in
             guard !item.isCompleted else { return false }
             guard !presentedAdvanceReminderIDs.contains(item.id) else { return false }
@@ -410,13 +460,20 @@ final class ReminderStore: ObservableObject {
     }
 
     private func checkDueReminders(referenceDate: Date) {
-        pendingItems
-            .filter { !$0.isCompleted && $0.scheduledAt <= referenceDate }
-            .forEach { presentedAdvanceReminderIDs.insert($0.id) }
+        let dueItems = pendingItems.filter { !$0.isCompleted && $0.scheduledAt <= referenceDate }
+        guard !dueItems.isEmpty else {
+            return
+        }
 
-        guard let nextDueReminder = pendingItems.first(where: {
-            !$0.isCompleted &&
-            $0.scheduledAt <= referenceDate &&
+        sendDueReminderWebhooksIfNeeded(for: dueItems)
+
+        guard preferences.inAppAlertsEnabled else {
+            return
+        }
+
+        dueItems.forEach { presentedAdvanceReminderIDs.insert($0.id) }
+
+        guard let nextDueReminder = dueItems.first(where: {
             !presentedReminderIDs.contains($0.id)
         }) else { return }
 
@@ -436,12 +493,20 @@ final class ReminderStore: ObservableObject {
     }
 
     private func autoPresentAdvanceNotice(for item: ReminderItem, referenceDate: Date) {
+        guard preferences.inAppAlertsEnabled else {
+            return
+        }
+
         let remainingMinutes = max(1, Int(ceil(item.scheduledAt.timeIntervalSince(referenceDate) / 60)))
         presentedAdvanceReminderIDs.insert(item.id)
         windowManager.showAdvanceNotice(for: item, remainingMinutes: remainingMinutes)
     }
 
     private func autoPresent(reminderID: ReminderItem.ID) {
+        guard preferences.inAppAlertsEnabled else {
+            return
+        }
+
         guard !presentedReminderIDs.contains(reminderID) else { return }
         guard let reminder = pendingItems.first(where: { $0.id == reminderID }) else { return }
 
@@ -451,6 +516,38 @@ final class ReminderStore: ObservableObject {
 
         NotificationCenter.default.post(name: .reminderDidAutoPresent, object: reminderID)
         windowManager.showReminder(reminder)
+    }
+
+    private func handleInAppAlertsEnabledChange(_ isEnabled: Bool) {
+        if isEnabled == false {
+            highlightedReminderID = nil
+            windowManager.dismissAll()
+        }
+
+        evaluateReminderPresentation()
+        scheduleNextTick()
+    }
+
+    private func handleWebhookSettingsChange() {
+        webhookAttemptedReminderIDs.removeAll()
+        evaluateReminderPresentation()
+        scheduleNextTick()
+    }
+
+    private func sendDueReminderWebhooksIfNeeded(for dueItems: [ReminderItem]) {
+        guard preferences.hasConfiguredWebhook else {
+            return
+        }
+
+        for item in dueItems where !webhookAttemptedReminderIDs.contains(item.id) {
+            webhookAttemptedReminderIDs.insert(item.id)
+
+            let title = item.title
+            let scheduleText = item.scheduleText
+            Task {
+                await webhookNotifier.sendDueReminder(title: title, scheduleText: scheduleText)
+            }
+        }
     }
 
     private func reconcileHighlightedReminder() {

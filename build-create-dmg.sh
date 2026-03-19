@@ -38,6 +38,20 @@ require_command swift
 require_command create-dmg "Install it with: brew install create-dmg"
 require_command ditto
 
+sign_app_bundle() {
+    local sign_identity="$1"
+    local -a sign_args=(--force --deep --sign "$sign_identity")
+
+    if [[ "$sign_identity" != "-" ]]; then
+        sign_args+=(--options runtime)
+    else
+        sign_args+=(-r "designated => identifier \"$BUNDLE_ID\"")
+    fi
+
+    echo "==> Signing app bundle ($sign_identity)"
+    codesign "${sign_args[@]}" "$APP_BUNDLE"
+}
+
 install_runtime_ai_config() {
     rm -f "$BUNDLE_ENV_FILE"
 
@@ -113,14 +127,7 @@ PLIST
 
 if command -v codesign >/dev/null 2>&1; then
     SIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
-    SIGN_ARGS=(--force --deep --sign "$SIGN_IDENTITY")
-
-    if [[ "$SIGN_IDENTITY" != "-" ]]; then
-        SIGN_ARGS+=(--options runtime)
-    fi
-
-    echo "==> Signing app bundle ($SIGN_IDENTITY)"
-    codesign "${SIGN_ARGS[@]}" "$APP_BUNDLE"
+    sign_app_bundle "$SIGN_IDENTITY"
 fi
 
 echo "==> Preparing DMG staging"

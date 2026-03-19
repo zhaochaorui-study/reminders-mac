@@ -4,7 +4,8 @@ struct TodoPanelView: View {
     private enum Layout {
         static let panelSize = CGSize(width: 320, height: 520)
         static let panelCornerRadius: CGFloat = 20
-        static let dividerVerticalPadding: CGFloat = 6
+        static let listScopeTopPadding: CGFloat = 3
+        static let listScopeBottomPadding: CGFloat = 6
         static let emptyStateVerticalPadding: CGFloat = 10
         static let historyAnimationDuration: Double = 0.18
     }
@@ -51,6 +52,7 @@ struct TodoPanelView: View {
     private var panelContent: some View {
         VStack(spacing: 0) {
             PanelHeaderView(theme: theme, onToggleTheme: onToggleTheme)
+                .padding(.top, 8)
                 .zIndex(3)
 
             AddReminderBarView(
@@ -73,7 +75,8 @@ struct TodoPanelView: View {
             )
             .zIndex(1)
             .padding(.horizontal, RemindersLayout.panelHorizontalInset)
-            .padding(.vertical, Layout.dividerVerticalPadding)
+            .padding(.top, Layout.listScopeTopPadding)
+            .padding(.bottom, Layout.listScopeBottomPadding)
 
             DividerLineView(color: RemindersPalette.border)
                 .padding(.horizontal, RemindersLayout.panelHorizontalInset)

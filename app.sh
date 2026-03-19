@@ -2,10 +2,17 @@
 set -e
 
 APP_NAME="RemindersMac"
+BUNDLE_ID="com.reminders.mac"
 BUILD_DIR=".build/arm64-apple-macosx/debug"
 APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
 ENV_SOURCE_FILE=".env.local"
 BUNDLE_ENV_FILE="$APP_BUNDLE/Contents/Resources/AIConfig.env"
+
+sign_app_bundle() {
+    local designated_requirement="designated => identifier \"$BUNDLE_ID\""
+    echo "Signing app bundle with stable designated requirement..."
+    codesign --force --deep --sign - -r="$designated_requirement" "$APP_BUNDLE"
+}
 
 usage() {
     echo "用法: ./app.sh [命令]"
@@ -83,6 +90,8 @@ do_build() {
 </dict>
 </plist>
 PLIST
+
+    sign_app_bundle
 
     echo "Build 完成"
 }

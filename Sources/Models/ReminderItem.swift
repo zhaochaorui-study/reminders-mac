@@ -238,8 +238,12 @@ struct ReminderItem: Identifiable, Hashable {
     let showsMoreButton: Bool
     let recurrenceRule: RecurrenceRule?
 
+    var scheduleSummaryText: String {
+        Self.scheduleText(for: scheduledAt)
+    }
+
     var scheduleText: String {
-        var text = Self.scheduleText(for: scheduledAt)
+        var text = scheduleSummaryText
         if let rule = recurrenceRule {
             text += "  ↻ \(rule.shortLabel)"
         }

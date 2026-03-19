@@ -1,11 +1,7 @@
 import Foundation
-import UserNotifications
+@preconcurrency import UserNotifications
 
 final class ReminderNotificationManager: NSObject, UNUserNotificationCenterDelegate, @unchecked Sendable {
-    private enum Constants {
-        static let systemNotificationsEnabled = false
-    }
-
     static let shared = ReminderNotificationManager()
 
     private let center = UNUserNotificationCenter.current()
@@ -18,7 +14,7 @@ final class ReminderNotificationManager: NSObject, UNUserNotificationCenterDeleg
     }
 
     func requestAuthorizationIfNeeded() {
-        guard Constants.systemNotificationsEnabled else {
+        guard ReminderPreferenceStorage.systemNotificationsEnabled() else {
             removeAllManagedNotifications()
             return
         }
@@ -32,7 +28,7 @@ final class ReminderNotificationManager: NSObject, UNUserNotificationCenterDeleg
     }
 
     func syncNotifications(for items: [ReminderItem], now: Date = Date()) {
-        guard Constants.systemNotificationsEnabled else {
+        guard ReminderPreferenceStorage.systemNotificationsEnabled() else {
             removeAllManagedNotifications()
             return
         }
