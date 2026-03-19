@@ -23,44 +23,102 @@ struct AIServiceConfiguration: Sendable {
 
 enum AIServiceConfigurationLoader {
     private enum Defaults {
-        static let apiURL = "https://api.deepseek.com/v1/chat/completions"
-        static let model = "deepseek-chat"
+        static let deepSeekAPIURL = "https://api.deepseek.com/v1/chat/completions"
+        static let deepSeekModel = "deepseek-chat"
         static let bundleEnvironmentResourceName = "AIConfig"
         static let bundleEnvironmentResourceExtension = "env"
         static let localEnvironmentFileName = ".env.local"
     }
 
-    private enum EnvironmentKeys {
+    private enum SystemDefaultEnvironmentKeys {
         static let apiKey = "DEEPSEEK_API_KEY"
         static let apiSecret = "DEEPSEEK_API_SECRET"
         static let apiURL = "DEEPSEEK_API_URL"
         static let model = "DEEPSEEK_MODEL"
     }
 
-    static func load() throws -> AIServiceConfiguration {
-        let values = mergedValues()
-        return try configuration(from: values)
+    private enum CustomEnvironmentKeys {
+        static let apiKey = "LLM_API_KEY"
+        static let apiSecret = "LLM_API_SECRET"
+        static let apiURL = "LLM_API_URL"
+        static let model = "LLM_MODEL"
     }
 
-    static func persistedCustomConfiguration() -> (apiBaseURL: String, apiKey: String) {
+    private struct ConfigurationKeySet {
+        let apiKey: String
+        let apiSecret: String
+        let apiURL: String
+        let model: String
+        let defaultAPIURL: String
+        let defaultModel: String
+        let fallbackAPIKey: String?
+        let fallbackAPISecret: String?
+        let fallbackAPIURL: String?
+        let fallbackModel: String?
+    }
+
+    private static let systemDefaultKeySet = ConfigurationKeySet(
+        apiKey: SystemDefaultEnvironmentKeys.apiKey,
+        apiSecret: SystemDefaultEnvironmentKeys.apiSecret,
+        apiURL: SystemDefaultEnvironmentKeys.apiURL,
+        model: SystemDefaultEnvironmentKeys.model,
+        defaultAPIURL: Defaults.deepSeekAPIURL,
+        defaultModel: Defaults.deepSeekModel,
+        fallbackAPIKey: nil,
+        fallbackAPISecret: nil,
+        fallbackAPIURL: nil,
+        fallbackModel: nil
+    )
+
+    private static let customKeySet = ConfigurationKeySet(
+        apiKey: CustomEnvironmentKeys.apiKey,
+        apiSecret: CustomEnvironmentKeys.apiSecret,
+        apiURL: CustomEnvironmentKeys.apiURL,
+        model: CustomEnvironmentKeys.model,
+        defaultAPIURL: Defaults.deepSeekAPIURL,
+        defaultModel: Defaults.deepSeekModel,
+        fallbackAPIKey: SystemDefaultEnvironmentKeys.apiKey,
+        fallbackAPISecret: SystemDefaultEnvironmentKeys.apiSecret,
+        fallbackAPIURL: SystemDefaultEnvironmentKeys.apiURL,
+        fallbackModel: SystemDefaultEnvironmentKeys.model
+    )
+
+    static func loadCustomConfiguration() throws -> AIServiceConfiguration {
+        let values = mergedValues()
+        return try configuration(from: values, keySet: customKeySet)
+    }
+
+    static func loadSystemDefaultConfiguration() throws -> AIServiceConfiguration {
+        let values = mergedValues()
+        return try configuration(from: values, keySet: systemDefaultKeySet)
+    }
+
+    static func persistedCustomConfiguration() -> (apiBaseURL: String, apiKey: String, model: String) {
         let fileValues = loadFileBackedValues()
 
-        let apiBaseURL = sanitizedValue(named: EnvironmentKeys.apiURL, from: fileValues)
+        let apiBaseURL = sanitizedValue(named: CustomEnvironmentKeys.apiURL, from: fileValues)
+            ?? sanitizedValue(named: SystemDefaultEnvironmentKeys.apiURL, from: fileValues)
             ?? LocalSecretsStore.value(for: .llmAPIBaseURL)
-        let apiKey = sanitizedValue(named: EnvironmentKeys.apiKey, from: fileValues)
+        let apiKey = sanitizedValue(named: CustomEnvironmentKeys.apiKey, from: fileValues)
+            ?? sanitizedValue(named: SystemDefaultEnvironmentKeys.apiKey, from: fileValues)
             ?? LocalSecretsStore.value(for: .llmAPIKey)
+        let model = sanitizedValue(named: CustomEnvironmentKeys.model, from: fileValues)
+            ?? sanitizedValue(named: SystemDefaultEnvironmentKeys.model, from: fileValues)
+            ?? Defaults.deepSeekModel
 
-        return (apiBaseURL, apiKey)
+        return (apiBaseURL, apiKey, model)
     }
 
-    static func saveCustomConfiguration(apiBaseURL: String, apiKey: String) {
+    static func saveCustomConfiguration(apiBaseURL: String, apiKey: String, model: String) {
         let normalizedAPIBaseURL = normalizedValue(apiBaseURL)
         let normalizedAPIKey = normalizedValue(apiKey)
+        let normalizedModel = normalizedValue(model)
         let updatedContent = updatedEnvironmentFileContent(
             from: preferredEnvironmentFileContent(),
             updates: [
-                EnvironmentKeys.apiURL: normalizedAPIBaseURL,
-                EnvironmentKeys.apiKey: normalizedAPIKey,
+                CustomEnvironmentKeys.apiURL: normalizedAPIBaseURL,
+                CustomEnvironmentKeys.apiKey: normalizedAPIKey,
+                CustomEnvironmentKeys.model: normalizedModel,
             ]
         )
 
@@ -82,37 +140,49 @@ enum AIServiceConfigurationLoader {
 
     static func load(
         overridingAPIBaseURL apiBaseURL: String? = nil,
-        apiKey: String? = nil
+        apiKey: String? = nil,
+        model: String? = nil
     ) throws -> AIServiceConfiguration {
         var values = mergedValues()
 
         if let apiBaseURL {
             if let normalizedAPIBaseURL = normalizedValue(apiBaseURL) {
-                values[EnvironmentKeys.apiURL] = normalizedAPIBaseURL
+                values[CustomEnvironmentKeys.apiURL] = normalizedAPIBaseURL
             } else {
-                values.removeValue(forKey: EnvironmentKeys.apiURL)
+                values.removeValue(forKey: CustomEnvironmentKeys.apiURL)
             }
         }
 
         if let apiKey {
             if let normalizedAPIKey = normalizedValue(apiKey) {
-                values[EnvironmentKeys.apiKey] = normalizedAPIKey
+                values[CustomEnvironmentKeys.apiKey] = normalizedAPIKey
             } else {
-                values.removeValue(forKey: EnvironmentKeys.apiKey)
+                values.removeValue(forKey: CustomEnvironmentKeys.apiKey)
             }
         }
 
-        return try configuration(from: values)
+        if let model {
+            if let normalizedModel = normalizedValue(model) {
+                values[CustomEnvironmentKeys.model] = normalizedModel
+            } else {
+                values.removeValue(forKey: CustomEnvironmentKeys.model)
+            }
+        }
+
+        return try configuration(from: values, keySet: customKeySet)
     }
 
-    private static func configuration(from values: [String: String]) throws -> AIServiceConfiguration {
-        let apiKey = try requiredValue(named: EnvironmentKeys.apiKey, from: values)
-        let apiSecret = sanitizedValue(named: EnvironmentKeys.apiSecret, from: values) ?? ""
-        let apiURLString = sanitizedValue(named: EnvironmentKeys.apiURL, from: values) ?? Defaults.apiURL
-        let model = sanitizedValue(named: EnvironmentKeys.model, from: values) ?? Defaults.model
+    private static func configuration(
+        from values: [String: String],
+        keySet: ConfigurationKeySet
+    ) throws -> AIServiceConfiguration {
+        let apiKey = try requiredValue(named: keySet.apiKey, fallbackName: keySet.fallbackAPIKey, from: values)
+        let apiSecret = sanitizedValue(named: keySet.apiSecret, fallbackName: keySet.fallbackAPISecret, from: values) ?? ""
+        let apiURLString = sanitizedValue(named: keySet.apiURL, fallbackName: keySet.fallbackAPIURL, from: values) ?? keySet.defaultAPIURL
+        let model = sanitizedValue(named: keySet.model, fallbackName: keySet.fallbackModel, from: values) ?? keySet.defaultModel
 
         guard let apiURL = resolvedAPIURL(from: apiURLString) else {
-            throw AIServiceError.invalidConfiguration(EnvironmentKeys.apiURL)
+            throw AIServiceError.invalidConfiguration(keySet.apiURL)
         }
 
         return AIServiceConfiguration(apiURL: apiURL, apiKey: apiKey, apiSecret: apiSecret, model: model)
@@ -137,15 +207,19 @@ enum AIServiceConfigurationLoader {
         var values: [String: String] = [:]
 
         if let apiBaseURL = normalizedValue(ReminderPreferenceStorage.llmAPIBaseURL()) {
-            values[EnvironmentKeys.apiURL] = apiBaseURL
+            values[CustomEnvironmentKeys.apiURL] = apiBaseURL
         }
 
         if let apiKey = normalizedValue(ReminderPreferenceStorage.llmAPIKey()) {
-            values[EnvironmentKeys.apiKey] = apiKey
+            values[CustomEnvironmentKeys.apiKey] = apiKey
         }
 
         if let apiSecret = normalizedValue(ReminderPreferenceStorage.llmAPISecret()) {
-            values[EnvironmentKeys.apiSecret] = apiSecret
+            values[CustomEnvironmentKeys.apiSecret] = apiSecret
+        }
+
+        if let model = normalizedValue(ReminderPreferenceStorage.llmModel()) {
+            values[CustomEnvironmentKeys.model] = model
         }
 
         return values
@@ -384,16 +458,28 @@ enum AIServiceConfigurationLoader {
         return String(line.dropFirst("export ".count)).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private static func requiredValue(named name: String, from values: [String: String]) throws -> String {
-        guard let value = sanitizedValue(named: name, from: values) else {
+    private static func requiredValue(
+        named name: String,
+        fallbackName: String? = nil,
+        from values: [String: String]
+    ) throws -> String {
+        guard let value = sanitizedValue(named: name, fallbackName: fallbackName, from: values) else {
             throw AIServiceError.missingConfiguration(name)
         }
 
         return value
     }
 
-    private static func sanitizedValue(named name: String, from values: [String: String]) -> String? {
-        guard let rawValue = values[name] else { return nil }
+    private static func sanitizedValue(
+        named name: String,
+        fallbackName: String? = nil,
+        from values: [String: String]
+    ) -> String? {
+        if let rawValue = values[name], let normalized = normalizedValue(rawValue) {
+            return normalized
+        }
+
+        guard let fallbackName, let rawValue = values[fallbackName] else { return nil }
         return normalizedValue(rawValue)
     }
 
@@ -441,18 +527,14 @@ final class AIService: @unchecked Sendable {
     }()
 
     func systemDefaultModelStatus() -> AISystemDefaultModelStatus {
-        #if canImport(FoundationModels)
-        if #available(macOS 26.0, *) {
-            switch SystemLanguageModel.default.availability {
-            case .available:
-                return .available
-            case .unavailable(let reason):
-                return .unavailable(systemDefaultModelUnavailableMessage(for: reason))
-            }
+        do {
+            _ = try AIServiceConfigurationLoader.loadSystemDefaultConfiguration()
+            return .available
+        } catch let error as AIServiceError {
+            return .unavailable(systemDefaultModelUnavailableMessage(for: error))
+        } catch {
+            return .unavailable("DeepSeek 默认配置当前不可用")
         }
-        #endif
-
-        return .unavailable("当前 macOS 版本不支持系统免费默认模型")
     }
 
     func parse(_ input: String) async throws -> AIParseResult {
@@ -476,7 +558,27 @@ final class AIService: @unchecked Sendable {
     func testConnection(apiBaseURL: String, apiKey: String) async throws -> String {
         let configuration = try AIServiceConfigurationLoader.load(
             overridingAPIBaseURL: apiBaseURL,
-            apiKey: apiKey
+            apiKey: apiKey,
+            model: nil
+        )
+
+        let json = try await requestChatCompletions(
+            configuration: configuration,
+            messages: [
+                ["role": "user", "content": "Reply with OK only."]
+            ],
+            temperature: 0,
+            maxTokens: 8
+        )
+        try validateCompletionResponse(json)
+        return configuration.model
+    }
+
+    func testConnection(apiBaseURL: String, apiKey: String, model: String) async throws -> String {
+        let configuration = try AIServiceConfigurationLoader.load(
+            overridingAPIBaseURL: apiBaseURL,
+            apiKey: apiKey,
+            model: model
         )
 
         let json = try await requestChatCompletions(
@@ -492,7 +594,7 @@ final class AIService: @unchecked Sendable {
     }
 
     private func parseWithRemoteModel(_ input: String, referenceDate: Date) async throws -> AIParseResult {
-        let configuration = try AIServiceConfigurationLoader.load()
+        let configuration = try AIServiceConfigurationLoader.loadCustomConfiguration()
         let json = try await requestChatCompletions(
             configuration: configuration,
             messages: [
@@ -554,41 +656,38 @@ final class AIService: @unchecked Sendable {
     }
 
     private func parseWithSystemDefaultModel(_ input: String, referenceDate: Date) async throws -> AIParseResult {
-        #if canImport(FoundationModels)
-        if #available(macOS 26.0, *) {
-            let session = LanguageModelSession(
-                model: .default,
-                instructions: parsingInstructions(referenceDate: referenceDate)
-            )
-            let response = try await session.respond(to: input)
-            let result = try parseJSON(response.content)
-            return finalizedParseResult(result, for: input, referenceDate: referenceDate)
-        }
-        #endif
-
-        throw AIServiceError.systemDefaultModelUnavailable("当前 macOS 版本不支持系统免费默认模型")
+        let configuration = try AIServiceConfigurationLoader.loadSystemDefaultConfiguration()
+        let json = try await requestChatCompletions(
+            configuration: configuration,
+            messages: [
+                ["role": "system", "content": parsingInstructions(referenceDate: referenceDate)],
+                ["role": "user", "content": input]
+            ],
+            temperature: 0.1,
+            maxTokens: 200
+        )
+        let content = try extractMessageContent(from: json)
+        let result = try parseJSON(content)
+        return finalizedParseResult(result, for: input, referenceDate: referenceDate)
     }
 
     private func systemDefaultModelUnavailableMessage(
         for reason: Any
     ) -> String {
-        #if canImport(FoundationModels)
-        if #available(macOS 26.0, *),
-           let reason = reason as? SystemLanguageModel.Availability.UnavailableReason {
-            switch reason {
-            case .deviceNotEligible:
-                return "当前设备不支持系统免费默认模型"
-            case .appleIntelligenceNotEnabled:
-                return "系统智能功能还没开启"
-            case .modelNotReady:
-                return "系统模型还没准备好，可能还在下载"
-            @unknown default:
-                return "系统免费默认模型当前不可用"
+        if let error = reason as? AIServiceError {
+            switch error {
+            case .missingConfiguration:
+                return "DeepSeek 默认配置缺失"
+            case .invalidConfiguration:
+                return "DeepSeek 默认配置无效"
+            case .systemDefaultModelUnavailable(let message):
+                return message
+            default:
+                return error.localizedDescription
             }
         }
-        #endif
 
-        return "系统免费默认模型当前不可用"
+        return "DeepSeek 默认配置当前不可用"
     }
 
     private func requestChatCompletions(
@@ -851,7 +950,7 @@ enum AIServiceError: LocalizedError {
         case .invalidConfiguration(let key):
             return "AI 配置无效：\(key)，检查一下格式别写飞了"
         case .systemDefaultModelUnavailable(let reason):
-            return "系统免费默认模型不可用：\(reason)。请关闭该开关后改用自定义配置，或者等系统模型就绪。"
+            return "系统免费模型（DeepSeek）不可用：\(reason)。请检查默认 DeepSeek 配置，或者关闭该开关后改用自定义 OpenAI 兼容配置。"
         case .requestFailed(let statusCode, let message):
             if let statusCode, let message, !message.isEmpty {
                 return "AI 请求失败（HTTP \(statusCode)）：\(message)"

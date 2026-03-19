@@ -74,6 +74,7 @@ struct ReminderSettingsView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @State private var draftLLMAPIBaseURL = ""
     @State private var draftLLMAPIKey = ""
+    @State private var draftLLMModel = ""
     @State private var draftWeComWebhookURL = ""
     @State private var draftFeishuWebhookURL = ""
     @State private var isTestingLLMConnection = false
@@ -114,6 +115,9 @@ struct ReminderSettingsView: View {
             invalidateAITestState()
         }
         .onChange(of: draftLLMAPIKey) {
+            invalidateAITestState()
+        }
+        .onChange(of: draftLLMModel) {
             invalidateAITestState()
         }
         .onChange(of: preferences.prefersSystemDefaultAIModel) {
@@ -262,7 +266,7 @@ struct ReminderSettingsView: View {
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(RemindersPalette.primaryText)
 
-                Text("可以直接切到系统免费默认模型，也可以保留下面的自定义接口做备用。自定义没填时，仍会回退本地 `.env.local`。")
+                Text("上面这档系统免费模式固定走 DeepSeek 默认配置；下面这套自定义配置可以填任何兼容 OpenAI Chat Completions 的厂商。")
                     .font(.system(size: 11))
                     .foregroundStyle(RemindersPalette.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
@@ -271,8 +275,8 @@ struct ReminderSettingsView: View {
             SettingsToggleCardView(
                 iconName: "cpu.fill",
                 iconAccent: RemindersPalette.accentGreen,
-                title: "使用系统免费默认模型",
-                description: "开启后，主面板 AI 解析会优先使用 macOS 系统自带模型，不需要填写自定义 Base URL 和 API Key。系统模型不可用时，会自动回退到下面的自定义配置或 `.env.local`。",
+                title: "使用系统免费模型（DeepSeek）",
+                description: "开启后，主面板 AI 解析会优先使用 DeepSeek 默认配置（DEEPSEEK_API_KEY / DEEPSEEK_API_URL / DEEPSEEK_MODEL）。这套默认配置不可用时，会自动回退到下面的自定义 OpenAI 兼容配置。",
                 isOn: $preferences.prefersSystemDefaultAIModel
             )
 
@@ -287,8 +291,10 @@ struct ReminderSettingsView: View {
                 description: aiConfigurationCardDescription,
                 baseURL: $draftLLMAPIBaseURL,
                 apiKey: $draftLLMAPIKey,
+                model: $draftLLMModel,
                 savedBaseURL: preferences.llmAPIBaseURL,
                 savedAPIKey: preferences.llmAPIKey,
+                savedModel: preferences.llmModel,
                 isTestingConnection: isTestingLLMConnection,
                 testFeedback: aiTestFeedback,
                 onTest: testLLMConfiguration,
@@ -357,22 +363,22 @@ struct ReminderSettingsView: View {
     }
 
     private var footerNote: some View {
-        Text("提示：系统免费默认模型开关会立即生效；自定义 AI 配置和 Webhook 仍然需要点“保存”才会真正写入本地。AI 解析会先看系统模型开关，其次才用这里保存的 Base URL 和 API Key。")
+        Text("提示：DeepSeek 默认配置开关会立即生效；自定义 OpenAI 兼容配置和 Webhook 仍然需要点“保存”才会真正写入本地。AI 解析会先看 DeepSeek 默认配置开关，其次才用这里保存的 Base URL、API Key 和 Model。")
             .font(.system(size: 10, weight: .medium))
             .foregroundStyle(RemindersPalette.tertiaryText)
             .padding(.horizontal, 2)
     }
 
     private var aiConfigurationCardTitle: String {
-        preferences.prefersSystemDefaultAIModel ? "备用自定义 AI 配置" : "主面板 AI 配置"
+        preferences.prefersSystemDefaultAIModel ? "备用自定义 OpenAI 兼容配置" : "自定义 OpenAI 兼容配置"
     }
 
     private var aiConfigurationCardDescription: String {
         if preferences.prefersSystemDefaultAIModel {
-            return "上面的系统免费默认模型开着时，主面板会优先走系统模型；下面这套 Base URL 和 API Key 会作为备用配置保留，系统模型不可用或你关闭开关后再接管。"
+            return "上面的系统免费模型（DeepSeek）开着时，主面板会优先走 DeepSeek 默认配置；下面这套 Base URL、API Key 和 Model 会作为备用 OpenAI 兼容配置保留，DeepSeek 不可用或你关闭开关后再接管。"
         }
 
-        return "用于自然语言解析待办。Base URL 支持填 OpenAI 兼容地址，程序会自动补到 `/chat/completions`；API Key 留空就没法调。"
+        return "用于自然语言解析待办。Base URL 支持填任意 OpenAI 兼容地址，程序会自动补到 `/chat/completions`；Model 必填，API Key 留空也别指望它能工作。"
     }
 
     private var systemDefaultModelFeedback: SettingsInlineFeedback? {
@@ -382,12 +388,12 @@ struct ReminderSettingsView: View {
         case .available:
             return SettingsInlineFeedback(
                 tone: .success,
-                message: "系统免费默认模型已启用，主面板 AI 解析会优先走本机模型，不需要自定义接口。"
+                message: "系统免费模型（DeepSeek）已启用，主面板 AI 解析会优先走默认 DeepSeek 配置。"
             )
         case .unavailable(let reason):
             return SettingsInlineFeedback(
                 tone: .failure,
-                message: "系统免费默认模型当前不可用：\(reason)。主面板会回退到下面的自定义配置；如果你也没配，那就别指望它能凭空解析。"
+                message: "系统免费模型（DeepSeek）当前不可用：\(reason)。主面板会回退到下面的自定义配置；如果你也没配，那就别指望它能凭空解析。"
             )
         }
     }
@@ -403,15 +409,17 @@ struct ReminderSettingsView: View {
         invalidateAITestState()
         draftLLMAPIBaseURL = preferences.llmAPIBaseURL
         draftLLMAPIKey = preferences.llmAPIKey
+        draftLLMModel = preferences.llmModel
         draftWeComWebhookURL = preferences.weComWebhookURL
         draftFeishuWebhookURL = preferences.feishuWebhookURL
     }
 
     private func saveLLMConfiguration() {
         invalidateAITestState()
-        preferences.saveLLMConfiguration(baseURL: draftLLMAPIBaseURL, apiKey: draftLLMAPIKey)
+        preferences.saveLLMConfiguration(baseURL: draftLLMAPIBaseURL, apiKey: draftLLMAPIKey, model: draftLLMModel)
         draftLLMAPIBaseURL = preferences.llmAPIBaseURL
         draftLLMAPIKey = preferences.llmAPIKey
+        draftLLMModel = preferences.llmModel
     }
 
     private func saveWeComWebhook() {
@@ -438,12 +446,14 @@ struct ReminderSettingsView: View {
 
         let currentBaseURL = draftLLMAPIBaseURL
         let currentAPIKey = draftLLMAPIKey
+        let currentModel = draftLLMModel
 
         Task {
             do {
                 let model = try await AIService.shared.testConnection(
                     apiBaseURL: currentBaseURL,
-                    apiKey: currentAPIKey
+                    apiKey: currentAPIKey,
+                    model: currentModel
                 )
 
                 await MainActor.run {
@@ -674,8 +684,10 @@ private struct SettingsAICredentialsCardView: View {
     let description: String
     @Binding var baseURL: String
     @Binding var apiKey: String
+    @Binding var model: String
     let savedBaseURL: String
     let savedAPIKey: String
+    let savedModel: String
     let isTestingConnection: Bool
     let testFeedback: SettingsInlineFeedback?
     let onTest: () -> Void
@@ -695,6 +707,10 @@ private struct SettingsAICredentialsCardView: View {
         apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private var trimmedModel: String {
+        model.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private var trimmedSavedBaseURL: String {
         savedBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -703,16 +719,22 @@ private struct SettingsAICredentialsCardView: View {
         savedAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private var trimmedSavedModel: String {
+        savedModel.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private var isEnabled: Bool {
-        !trimmedSavedBaseURL.isEmpty || !trimmedSavedAPIKey.isEmpty
+        !trimmedSavedBaseURL.isEmpty || !trimmedSavedAPIKey.isEmpty || !trimmedSavedModel.isEmpty
     }
 
     private var hasUnsavedChanges: Bool {
-        trimmedBaseURL != trimmedSavedBaseURL || trimmedAPIKey != trimmedSavedAPIKey
+        trimmedBaseURL != trimmedSavedBaseURL
+            || trimmedAPIKey != trimmedSavedAPIKey
+            || trimmedModel != trimmedSavedModel
     }
 
     private var canTestConnection: Bool {
-        !trimmedAPIKey.isEmpty && !isTestingConnection
+        !trimmedAPIKey.isEmpty && !trimmedModel.isEmpty && !isTestingConnection
     }
 
     var body: some View {
@@ -762,6 +784,13 @@ private struct SettingsAICredentialsCardView: View {
                     text: $apiKey,
                     isSecure: true
                 )
+
+                SettingsTextInputFieldView(
+                    label: "Model",
+                    placeholder: "例如 gpt-4o-mini / deepseek-chat / qwen-plus",
+                    accent: iconAccent,
+                    text: $model
+                )
             }
 
             HStack(spacing: SettingsComponentLayout.compactSpacing) {
@@ -781,10 +810,11 @@ private struct SettingsAICredentialsCardView: View {
                     width: SettingsComponentLayout.clearButtonWidth,
                     accent: iconAccent,
                     isProminent: false,
-                    isEnabled: !baseURL.isEmpty || !apiKey.isEmpty
+                    isEnabled: !baseURL.isEmpty || !apiKey.isEmpty || !model.isEmpty
                 ) {
                     baseURL = ""
                     apiKey = ""
+                    model = ""
                 }
 
                 SettingsActionButtonView(
@@ -807,7 +837,7 @@ private struct SettingsAICredentialsCardView: View {
                     .foregroundStyle(iconAccent)
                     .padding(.top, 2)
 
-                Text("Base URL 和 API Key 会写入当前项目的 `.env.local`，仅保存在你本机工作目录里，不会被本应用额外上传或共享。只有你主动点主面板里的 AI 解析时，当前输入内容才会发到你配置的大模型接口。")
+                Text("Base URL、API Key 和 Model 会写入当前项目的 `.env.local`，仅保存在你本机工作目录里，不会被本应用额外上传或共享。只有你主动点主面板里的 AI 解析时，当前输入内容才会发到你配置的大模型接口。")
                     .font(.system(size: SettingsComponentLayout.noteFontSize, weight: .medium))
                     .foregroundStyle(RemindersPalette.primaryText)
                     .fixedSize(horizontal: false, vertical: true)

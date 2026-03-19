@@ -6,7 +6,7 @@
 
 1. 运行 `./app.sh run`
 2. 在设置页的“AI 解析”里二选一：
-3. 开启“使用系统免费默认模型”，直接走系统自带模型
-4. 或者复制 `.env.example` 为 `.env.local`，填写 `DEEPSEEK_API_KEY`
+3. 开启“使用系统免费模型（DeepSeek）”，直接走默认 DeepSeek 配置
+4. 或者复制 `.env.example` 为 `.env.local`，填写自定义 OpenAI 兼容配置 `LLM_API_KEY` / `LLM_API_URL` / `LLM_MODEL`
 
 `.env.local` 已加入 Git 忽略，不会被提交。

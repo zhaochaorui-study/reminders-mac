@@ -36,6 +36,10 @@ enum ReminderPreferenceStorage {
         AIServiceConfigurationLoader.persistedCustomConfiguration().apiKey
     }
 
+    static func llmModel() -> String {
+        AIServiceConfigurationLoader.persistedCustomConfiguration().model
+    }
+
     static func llmAPISecret() -> String {
         LocalSecretsStore.value(for: .llmAPISecret)
     }
@@ -69,6 +73,8 @@ final class ReminderPreferences: ObservableObject {
 
     @Published var llmAPIKey: String
 
+    @Published var llmModel: String
+
     var hasEnabledAlertChannel: Bool {
         systemNotificationsEnabled || inAppAlertsEnabled
     }
@@ -84,6 +90,7 @@ final class ReminderPreferences: ObservableObject {
         }
 
         return !llmAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !llmModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private let userDefaults: UserDefaults
@@ -97,6 +104,7 @@ final class ReminderPreferences: ObservableObject {
         self.feishuWebhookURL = ReminderPreferenceStorage.feishuWebhookURL(userDefaults: userDefaults)
         self.llmAPIBaseURL = ReminderPreferenceStorage.llmAPIBaseURL()
         self.llmAPIKey = ReminderPreferenceStorage.llmAPIKey()
+        self.llmModel = ReminderPreferenceStorage.llmModel()
     }
 
     func saveWeComWebhookURL(_ value: String) {
@@ -107,13 +115,15 @@ final class ReminderPreferences: ObservableObject {
         feishuWebhookURL = Self.normalizedWebhookURL(value)
     }
 
-    func saveLLMConfiguration(baseURL: String, apiKey: String) {
+    func saveLLMConfiguration(baseURL: String, apiKey: String, model: String) {
         AIServiceConfigurationLoader.saveCustomConfiguration(
             apiBaseURL: Self.normalizedCredentialValue(baseURL),
-            apiKey: Self.normalizedCredentialValue(apiKey)
+            apiKey: Self.normalizedCredentialValue(apiKey),
+            model: Self.normalizedCredentialValue(model)
         )
         llmAPIBaseURL = ReminderPreferenceStorage.llmAPIBaseURL()
         llmAPIKey = ReminderPreferenceStorage.llmAPIKey()
+        llmModel = ReminderPreferenceStorage.llmModel()
         LocalSecretsStore.deleteValue(for: .llmAPIBaseURL)
         LocalSecretsStore.deleteValue(for: .llmAPIKey)
         LocalSecretsStore.deleteValue(for: .llmAPISecret)
