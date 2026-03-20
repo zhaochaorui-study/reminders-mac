@@ -22,11 +22,12 @@ final class MenuBarController: NSObject, ObservableObject {
     private let panelHideTimingFunction = CAMediaTimingFunction(controlPoints: 0.32, 0.0, 0.58, 1.0)
     private let defaultPanelAnchorPoint = CGPoint(x: 0.5, y: 1)
     private var panelContentAnchorPoint = CGPoint(x: 0.5, y: 1)
-
+    private let menuBarTitleMaxWidth: CGFloat = 88
+ 
     init(store: ReminderStore, onShowSettings: @escaping @MainActor () -> Void) {
         self.store = store
         self.onShowSettings = onShowSettings
-        self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         self.panel = MenuBarPanel(
             contentRect: NSRect(origin: .zero, size: panelSize),
             styleMask: [.borderless, .fullSizeContentView],
@@ -48,11 +49,12 @@ final class MenuBarController: NSObject, ObservableObject {
         button.target = self
         button.action = #selector(togglePanel(_:))
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-        button.imagePosition = .imageOnly
+        button.imagePosition = .imageLeading
         button.imageScaling = .scaleProportionallyDown
         button.appearsDisabled = false
         button.toolTip = "Reminders"
-
+        statusItem.length = NSStatusItem.squareLength
+ 
         configureContextMenu()
     }
 
@@ -120,11 +122,17 @@ final class MenuBarController: NSObject, ObservableObject {
             }
             .store(in: &cancellables)
 
+        ReminderPreferences.shared.$menuBarShowLatestTodo
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.refreshUI()
+            }
+            .store(in: &cancellables)
+
     }
 
     private func refreshUI() {
         updateStatusItemImage()
-        updatePanelLayout()
     }
 
     private func updateStatusItemImage() {
@@ -145,9 +153,37 @@ final class MenuBarController: NSObject, ObservableObject {
         )
         renderer.scale = NSScreen.main?.backingScaleFactor ?? 2
 
-        let image = renderer.nsImage
+        let image = renderer.nsImage ?? NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: "Reminders")
         image?.isTemplate = false
         button.image = image
+
+        if ReminderPreferences.shared.menuBarShowLatestTodo {
+            let calendar = Calendar.autoupdatingCurrent
+            let firstPending = store.pendingItems.first { item in
+                !item.isCompleted && calendar.isDateInToday(item.scheduledAt)
+            }
+            if let item = firstPending {
+                let formatter = DateFormatter()
+                formatter.dateFormat = "HH:mm"
+                let time = formatter.string(from: item.scheduledAt)
+                let normalizedTitle = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                let truncatedTitle = String(normalizedTitle.prefix(4))
+                let titleSegments = [time, truncatedTitle].filter { !$0.isEmpty }
+                let title = titleSegments.joined(separator: " ")
+
+                button.title = title
+                statusItem.length = min(
+                    NSStatusItem.squareLength + menuBarTitleMaxWidth,
+                    max(NSStatusItem.squareLength, button.intrinsicContentSize.width + 12)
+                )
+            } else {
+                button.title = ""
+                statusItem.length = NSStatusItem.squareLength
+            }
+        } else {
+            button.title = ""
+            statusItem.length = NSStatusItem.squareLength
+        }
     }
 
     private func updatePanelLayout() {
@@ -162,6 +198,7 @@ final class MenuBarController: NSObject, ObservableObject {
         }
 
         store.refreshForPanelPresentation()
+        updatePanelLayout()
         let targetFrame = panelFrame(relativeTo: button)
         panelContentAnchorPoint = panelRevealAnchorPoint(relativeTo: button, targetFrame: targetFrame)
         panelAnimationToken = UUID()

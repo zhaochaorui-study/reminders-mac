@@ -45,7 +45,7 @@ sign_app_bundle() {
     if [[ "$sign_identity" != "-" ]]; then
         sign_args+=(--options runtime)
     else
-        sign_args+=(-r "designated => identifier \"$BUNDLE_ID\"")
+        sign_args+=(-r="designated => identifier \"$BUNDLE_ID\"")
     fi
 
     echo "==> Signing app bundle ($sign_identity)"
@@ -116,7 +116,7 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>LSUIElement</key>
-    <false/>
+    <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSUserNotificationAlertStyle</key>

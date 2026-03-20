@@ -122,7 +122,9 @@ final class ReminderWindowManager {
                     panel.animator().alphaValue = 0
                 },
                 completionHandler: { [weak self] in
-                    self?.dismissAdvanceNotice(for: reminderID)
+                    Task { @MainActor [weak self] in
+                        self?.dismissAdvanceNotice(for: reminderID)
+                    }
                 }
             )
         }
@@ -143,8 +145,7 @@ final class ReminderWindowManager {
             return
         }
 
-        window.orderOut(nil)
-        window.close()
+        closePanel(window)
     }
 
     func dismissAll() {
@@ -194,8 +195,7 @@ final class ReminderWindowManager {
 
     private func animateReminderPanelDismissal(_ panel: NSPanel) {
         guard panel.isVisible else {
-            panel.orderOut(nil)
-            panel.close()
+            closePanel(panel)
             return
         }
 
@@ -206,11 +206,21 @@ final class ReminderWindowManager {
                 panel.animator().alphaValue = 0
                 animateReminderPanelScale(panel, scale: Constants.reminderDismissScale, duration: Constants.reminderDisappearDuration)
             },
-            completionHandler: {
-                panel.orderOut(nil)
-                panel.close()
+            completionHandler: { [weak self, weak panel] in
+                Task { @MainActor [weak self, weak panel] in
+                    guard let self, let panel else {
+                        return
+                    }
+
+                    self.closePanel(panel)
+                }
             }
         )
+    }
+
+    private func closePanel(_ panel: NSPanel) {
+        panel.orderOut(nil)
+        panel.close()
     }
 
     private func animateReminderPanelScale(_ panel: NSPanel, scale: CGFloat, duration: TimeInterval) {

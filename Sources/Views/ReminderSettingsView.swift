@@ -100,6 +100,7 @@ struct ReminderSettingsView: View {
                 VStack(alignment: .leading, spacing: Layout.stackSpacing) {
                     headerSection
                     channelSection
+                    menuBarSection
                     aiSection
                     webhookSection
                     footerNote
@@ -193,6 +194,39 @@ struct ReminderSettingsView: View {
             isEnabled: preferences.hasConfiguredWebhook,
             accent: RemindersPalette.accentGreen
         )
+    }
+
+    private var menuBarSection: some View {
+        VStack(alignment: .leading, spacing: Layout.sectionSpacing) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("菜单栏")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(RemindersPalette.primaryText)
+
+                Text("控制菜单栏图标旁边是否显示最近待办的标题和时间。")
+                    .font(.system(size: 11))
+                    .foregroundStyle(RemindersPalette.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            SettingsToggleCardView(
+                iconName: "menubar.rectangle",
+                iconAccent: RemindersPalette.accentBlue,
+                title: "显示最近待办",
+                description: "在菜单栏图标旁显示最近一条待办的时间和标题（最多 5 个字）。关闭后只显示图标。",
+                isOn: $preferences.menuBarShowLatestTodo
+            )
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: Layout.cardCornerRadius, style: .continuous)
+                .fill(RemindersPalette.panel)
+                .overlay {
+                    RoundedRectangle(cornerRadius: Layout.cardCornerRadius, style: .continuous)
+                        .stroke(RemindersPalette.border.opacity(0.62), lineWidth: 0.8)
+                }
+        )
+        .shadow(color: RemindersPalette.shadow.opacity(isCandy ? 0.16 : 0.24), radius: 14, x: 0, y: 8)
     }
 
     private var channelSection: some View {

@@ -7,6 +7,7 @@ enum ReminderPreferenceStorage {
     static let prefersSystemDefaultAIModelKey = "prefersSystemDefaultAIModel"
     static let weComWebhookURLKey = "weComWebhookURL"
     static let feishuWebhookURLKey = "feishuWebhookURL"
+    static let menuBarShowLatestTodoKey = "menuBarShowLatestTodo"
 
     static func systemNotificationsEnabled(userDefaults: UserDefaults = .standard) -> Bool {
         userDefaults.object(forKey: systemNotificationsEnabledKey) as? Bool ?? false
@@ -26,6 +27,10 @@ enum ReminderPreferenceStorage {
 
     static func feishuWebhookURL(userDefaults: UserDefaults = .standard) -> String {
         userDefaults.string(forKey: feishuWebhookURLKey) ?? ""
+    }
+
+    static func menuBarShowLatestTodo(userDefaults: UserDefaults = .standard) -> Bool {
+        userDefaults.object(forKey: menuBarShowLatestTodoKey) as? Bool ?? true
     }
 
     static func llmAPIBaseURL() -> String {
@@ -69,6 +74,10 @@ final class ReminderPreferences: ObservableObject {
         didSet { userDefaults.set(feishuWebhookURL, forKey: ReminderPreferenceStorage.feishuWebhookURLKey) }
     }
 
+    @Published var menuBarShowLatestTodo: Bool {
+        didSet { userDefaults.set(menuBarShowLatestTodo, forKey: ReminderPreferenceStorage.menuBarShowLatestTodoKey) }
+    }
+
     @Published var llmAPIBaseURL: String
 
     @Published var llmAPIKey: String
@@ -102,6 +111,7 @@ final class ReminderPreferences: ObservableObject {
         self.prefersSystemDefaultAIModel = ReminderPreferenceStorage.prefersSystemDefaultAIModel(userDefaults: userDefaults)
         self.weComWebhookURL = ReminderPreferenceStorage.weComWebhookURL(userDefaults: userDefaults)
         self.feishuWebhookURL = ReminderPreferenceStorage.feishuWebhookURL(userDefaults: userDefaults)
+        self.menuBarShowLatestTodo = ReminderPreferenceStorage.menuBarShowLatestTodo(userDefaults: userDefaults)
         self.llmAPIBaseURL = ReminderPreferenceStorage.llmAPIBaseURL()
         self.llmAPIKey = ReminderPreferenceStorage.llmAPIKey()
         self.llmModel = ReminderPreferenceStorage.llmModel()

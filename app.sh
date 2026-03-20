@@ -84,7 +84,7 @@ do_build() {
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>LSUIElement</key>
-    <false/>
+    <true/>
     <key>NSUserNotificationAlertStyle</key>
     <string>alert</string>
 </dict>
